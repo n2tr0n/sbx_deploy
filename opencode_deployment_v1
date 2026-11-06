@@ -128,7 +128,7 @@ set -g pane-border-format "#[fg=colour6]#{pane_index} #[fg=yellow]#{pane_title}"
 set -g pane-border-status top
 
 setw -g window-status-format "#[fg=colour6][#I]#[fg=white]#W"
-setw -g window-status-current-format "#[fg=black,bold,bg=yellow]#I [#W]"
+setw -g window-status-current-format "#[fg=#000000,bold,bg=yellow]#I [#W]#[default]"
 set-window-option -g status-position top
 
 set -g status-fg white
