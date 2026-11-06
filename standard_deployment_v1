@@ -6,8 +6,8 @@ cat <<'SBX_BANNER'
 
 [ SBX / DEPLOYMENT CONSOLE ]========================================
 
-   _____    ____    _  __       ____                     __         __  __
-  / ___/   / __ )  | |/ /      / __ \  ___     ____     / /  ___   / / / /
+   _____    ____    _  __       ____                     __          __  __
+  / ___/   / __ )  | |/ /      / __ \  ___     ____     / /  ____   / / / /
   \__ \   / __  |  |   /      / / / / / _ \   / __ \  / /  / __ \ / /_/ /
  ___/ /  / /_/ /  /   |      / /_/ / /  __/  / /_/ / / /  / /_/ / \__, /
 /____/  /_____/  /_/|_|     /_____/  \___/  / .___/ /_/   \____/ /____/
@@ -159,11 +159,80 @@ if ! resurrect_ready; then
     fi
 fi
 
+tmux_wrapper="$HOME/.local/bin/tmux"
+wrapper_contents() {
+    cat <<'TMUX_WRAPPER'
+#!/bin/sh
+LC_ALL=C.utf8 exec /usr/bin/tmux -u "$@"
+TMUX_WRAPPER
+}
+
+if [[ -e "$tmux_wrapper" || -L "$tmux_wrapper" ]]; then
+    if [[ ! -f "$tmux_wrapper" || ! -x "$tmux_wrapper" ]] ||
+        ! cmp -s -- "$tmux_wrapper" <(wrapper_contents); then
+        printf 'Existing tmux wrapper differs or is unusable: %s\n' "$tmux_wrapper" >&2
+        exit 1
+    fi
+else
+    (
+        mkdir -p -- "${tmux_wrapper%/*}"
+        staged_wrapper=$(mktemp -- "$tmux_wrapper.tmp.XXXXXX")
+        trap 'rm -f -- "$staged_wrapper"' EXIT
+        wrapper_contents > "$staged_wrapper"
+        chmod 755 -- "$staged_wrapper"
+        ln -T -- "$staged_wrapper" "$tmux_wrapper"
+    )
+fi
+
+ensure_bash_path() {
+    local startup_file=$1
+    local marker='# SBX Deploy: put the tmux wrapper on PATH'
+    if [[ -e "$startup_file" || -L "$startup_file" ]]; then
+        if [[ ! -f "$startup_file" || ! -r "$startup_file" ]]; then
+            printf 'Cannot read Bash startup file: %s\n' "$startup_file" >&2
+            exit 1
+        fi
+        if grep -Fxq -- "$marker" "$startup_file"; then
+            return 0
+        fi
+    fi
+
+    cat >> "$startup_file" <<'SBX_BASH_PATH'
+
+# SBX Deploy: put the tmux wrapper on PATH
+case $- in
+    *i*)
+        case ${PATH-} in
+            "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
+            *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
+        esac
+        ;;
+esac
+SBX_BASH_PATH
+}
+
+ensure_bash_path "$HOME/.bashrc"
+# Bash login shells read only the first readable login startup file.
+login_file="$HOME/.profile"
+for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
+    if [[ -f "$candidate" && -r "$candidate" ]]; then
+        login_file="$candidate"
+        break
+    fi
+done
+ensure_bash_path "$login_file"
+
 cat <<'SBX_NEXT_STEPS'
 
-Setup complete. tmux-resurrect is installed.
+Setup complete. tmux-resurrect and the UTF-8 tmux wrapper are installed.
+
+New interactive Bash shells pick up the wrapper automatically. In an
+already-open Bash shell, run this once before starting tmux:
+    export PATH="$HOME/.local/bin:$PATH"; hash -r
 
 Start tmux by running: tmux
-If tmux is already running, reload the configuration:
+To reload the configuration in an existing session:
     tmux source-file ~/.tmux.conf
+To verify the locale, start a fresh tmux server and run locale charmap
+inside it. Expected output: UTF-8.
 SBX_NEXT_STEPS
