@@ -231,13 +231,78 @@ for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
 done
 ensure_bash_path "$login_file"
 
+run_as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+install_global_aliases() (
+    global_bashrc=/etc/bash.bashrc
+    marker='# SBX Deploy: custom system aliases'
+    staged_global=
+    cleanup() {
+        if [[ -n "$staged_global" ]]; then
+            run_as_root rm -f -- "$staged_global"
+        fi
+    }
+    trap cleanup EXIT
+
+    if [[ -L "$global_bashrc" || ! -f "$global_bashrc" || ! -r "$global_bashrc" ]]; then
+        printf 'Cannot update the system-wide Bash configuration: %s\n' "$global_bashrc" >&2
+        exit 1
+    fi
+    if grep -Fxq -- "$marker" "$global_bashrc"; then
+        return 0
+    fi
+    if (( EUID != 0 )) && ! command -v sudo >/dev/null 2>&1; then
+        printf '%s\n' 'sudo is unavailable. Install the system-wide aliases as root, then rerun.' >&2
+        exit 1
+    fi
+
+    staged_global=$(run_as_root mktemp -- "$global_bashrc.tmp.XXXXXX")
+    run_as_root cp -p -- "$global_bashrc" "$staged_global"
+    run_as_root tee -a "$staged_global" >/dev/null <<'SBX_ALIASES'
+
+# SBX Deploy: custom system aliases
+# Custom aliases for ansible control
+alias playbook='ansible-playbook'
+alias playtest='ansible-playbook -C'
+alias playsyntax='ansible-playbook --syntax-check'
+
+# List active permissions on a file or folder
+alias lperms='stat -c "%a %n"'
+
+# Make a password hash
+alias makepass='python -c "from passlib.hash import sha512_crypt; import getpass; print(sha512_crypt.using(rounds=5000).hash(getpass.getpass()))"'
+
+# Strip comments and blank lines from a configuration file
+alias configcat='grep -Ev "^$|^#"'
+
+# Netstat aliases
+alias netstat-numeric='netstat -tulpn'
+alias netstat-names='netstat -tulp'
+SBX_ALIASES
+
+    backup=$(run_as_root mktemp -- "$global_bashrc.bak.XXXXXX")
+    run_as_root cp -p -- "$global_bashrc" "$backup"
+    printf 'Saved previous system-wide Bash configuration to %s\n' "$backup"
+    run_as_root mv -fT -- "$staged_global" "$global_bashrc"
+    staged_global=
+)
+
+install_global_aliases
+
 cat <<'SBX_NEXT_STEPS'
 
 Setup complete. tmux-resurrect and the UTF-8 tmux wrapper are installed.
 
-New interactive Bash shells pick up the wrapper automatically. In an
-already-open Bash shell, run this once before starting tmux:
+New interactive Bash shells pick up the wrapper and system aliases
+automatically. In an already-open Bash shell, run this before starting tmux:
     export PATH="$HOME/.local/bin:$PATH"; hash -r
+    source /etc/bash.bashrc
 
 Start tmux by running: tmux
 To reload the configuration in an existing session:
