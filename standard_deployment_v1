@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# FIGlet Slant by Glenn Chappell, pre-rendered at full width.
+cat <<'SBX_BANNER'
+
+[ SBX / DEPLOYMENT CONSOLE ]========================================
+
+   _____    ____    _  __       ____                     __          __  __
+  / ___/   / __ )  | |/ /      / __ \  ___     ____     / /  ____   / / / /
+  \__ \   / __  |  |   /      / / / / / _ \   / __ \  / /  / __ \ / /_/ /
+ ___/ /  / /_/ /  /   |      / /_/ / /  __/  / /_/ / / /  / /_/ / \__, /
+/____/  /_____/  /_/|_|     /_____/  \___/  / .___/ /_/   \____/ /____/
+                                           /_/
+
+  Nitron's Deployment Script for SBX V Alpha 0.1
+====================================================================
+
+SBX_BANNER
+
+conf="$HOME/.tmux.conf"
+plugin_dir="$HOME/.tmux/plugins"
+tpm_dir="$plugin_dir/tpm"
+resurrect_dir="$plugin_dir/tmux-resurrect"
+resurrect_plugin="$resurrect_dir/resurrect.tmux"
+
+tpm_ready() {
+    [[ -f "$tpm_dir/tpm" && -x "$tpm_dir/tpm" &&
+       -f "$tpm_dir/bin/install_plugins" && -x "$tpm_dir/bin/install_plugins" ]]
+}
+
+resurrect_ready() {
+    [[ -f "$resurrect_plugin" && -r "$resurrect_plugin" && -x "$resurrect_plugin" ]]
+}
+
+if [[ -e "$tpm_dir" || -L "$tpm_dir" ]] && ! tpm_ready; then
+    printf 'Existing TPM path is unusable: %s\n' "$tpm_dir" >&2
+    exit 1
+fi
+
+if [[ -e "$resurrect_dir" || -L "$resurrect_dir" ]] && ! resurrect_ready; then
+    printf 'Existing tmux-resurrect path is unusable: %s\n' "$resurrect_dir" >&2
+    exit 1
+fi
+
+if [[ ( -e "$conf" || -L "$conf" ) && ! -f "$conf" ]]; then
+    printf 'Existing configuration does not point to a regular file: %s\n' "$conf" >&2
+    exit 1
+fi
+
+missing_packages=()
+for package in tmux vim git; do
+    if [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
+        missing_packages+=("$package")
+    fi
+done
+if (( ${#missing_packages[@]} > 0 )); then
+    apt=(apt-get)
+    if (( EUID != 0 )); then
+        apt=(sudo apt-get)
+    fi
+    "${apt[@]}" update
+    "${apt[@]}" install -y "${missing_packages[@]}"
+fi
+
+clone_tpm() (
+    mkdir -p -- "$plugin_dir"
+    staging_dir=$(mktemp -d -- "$plugin_dir/.tpm-stage.XXXXXX")
+    trap 'rm -rf -- "$staging_dir"' EXIT
+    git clone https://github.com/tmux-plugins/tpm "$staging_dir/checkout"
+    mv -nT -- "$staging_dir/checkout" "$tpm_dir"
+)
+
+if [[ ! -e "$tpm_dir" && ! -L "$tpm_dir" ]]; then
+    clone_tpm
+    if ! tpm_ready; then
+        printf 'TPM checkout is unusable: %s\n' "$tpm_dir" >&2
+        exit 1
+    fi
+fi
+
+new_conf=$(mktemp -- "$conf.tmp.XXXXXX")
+trap 'rm -f -- "$new_conf"' EXIT
+cat > "$new_conf" <<'TMUX_CONF'
+set -g mouse on
+
+set-option -g history-limit 1000000000
+
+#set -g pane-border-format "#{pane_index}"
+set -g pane-border-format "#[fg=colour6]#{pane_index} #[fg=yellow]#{pane_title}"
+set -g pane-border-status top
+
+setw -g window-status-format "#[fg=colour6][#I]#[fg=white]#W"
+setw -g window-status-current-format "#[bg=cyan]#[fg=white]#I#[fg=black,bold]#[bg=cyan] [#W]"
+set-window-option -g status-position top
+
+set -g status-fg white
+set -g status-bg black
+set -g status-left-length 100
+set -g status-right-length 60
+set-option -g status-interval 5
+set-option -g automatic-rename on
+set-option -g automatic-rename-format '#{b:pane_current_path}'
+
+set -g status-right "#[fg=green]%a %Y-%m-%d %k:%M:%S (#(date -u | awk '{print $4}') UTC)"
+set -g status-left "#[fg=yellow]Remote #[fg=green]#h >>"
+set-option -g renumber-windows on
+
+#tmux plugins
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+# set -g @resurrect-capture-pane-contents 'on'
+
+# This line must be at the very bottom of .tmux.conf:
+run '~/.tmux/plugins/tpm/tpm'
+TMUX_CONF
+
+install_tmux_config() {
+    if [[ -f "$conf" ]]; then
+        if cmp -s -- "$conf" "$new_conf"; then
+            return 0
+        else
+            compare_status=$?
+        fi
+        if (( compare_status != 1 )); then
+            printf 'Could not compare the existing configuration: %s\n' "$conf" >&2
+            exit 1
+        fi
+
+        if [[ -L "$conf" ]]; then
+            printf 'Configuration differs and is a symlink. Update its target before rerunning: %s\n' "$conf" >&2
+            exit 1
+        fi
+
+        backup=$(mktemp -- "$conf.bak.XXXXXX")
+        if ! cp -p -- "$conf" "$backup"; then
+            rm -f -- "$backup"
+            printf 'Could not back up the existing configuration: %s\n' "$conf" >&2
+            exit 1
+        fi
+        printf 'Saved previous configuration to %s\n' "$backup"
+    fi
+
+    mv -fT -- "$new_conf" "$conf"
+}
+
+install_tmux_config
+
+if ! resurrect_ready; then
+    if ! "$tpm_dir/bin/install_plugins"; then
+        printf '%s\n' 'TPM plugin installation failed.' >&2
+        exit 1
+    fi
+
+    # TPM can exit successfully even when it finds no plugins to install.
+    if ! resurrect_ready; then
+        printf 'TPM did not install an executable plugin at %s\n' "$resurrect_plugin" >&2
+        exit 1
+    fi
+fi
+
+cat <<'SBX_NEXT_STEPS'
+
+Setup complete. tmux-resurrect is installed.
+
+Start tmux by running: tmux
+If tmux is already running, reload the configuration:
+    tmux source-file ~/.tmux.conf
+SBX_NEXT_STEPS
