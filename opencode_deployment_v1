@@ -18,11 +18,19 @@ cat <<'SBX_BANNER'
 
 SBX_BANNER
 
-conf="$HOME/.tmux.conf"
+conf=/etc/tmux.conf
 plugin_dir="$HOME/.tmux/plugins"
 tpm_dir="$plugin_dir/tpm"
 resurrect_dir="$plugin_dir/tmux-resurrect"
 resurrect_plugin="$resurrect_dir/resurrect.tmux"
+
+run_as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
 
 tpm_ready() {
     [[ -f "$tpm_dir/tpm" && -x "$tpm_dir/tpm" &&
@@ -97,8 +105,19 @@ if [[ ! -e "$tpm_dir" && ! -L "$tpm_dir" ]]; then
     fi
 fi
 
-new_conf=$(mktemp -- "$conf.tmp.XXXXXX")
-trap 'rm -f -- "$new_conf"' EXIT
+new_conf=$(mktemp)
+setup_session=
+cleanup_installer() {
+    rm -f -- "$new_conf"
+    if [[ -n "$setup_session" ]] &&
+       /usr/bin/tmux has-session -t "$setup_session" 2>/dev/null; then
+        if ! /usr/bin/tmux kill-session -t "$setup_session"; then
+            printf 'Could not remove temporary tmux setup session: %s\n' "$setup_session" >&2
+            return 1
+        fi
+    fi
+}
+trap cleanup_installer EXIT
 cat > "$new_conf" <<'TMUX_CONF'
 set -g mouse on
 
@@ -109,7 +128,7 @@ set -g pane-border-format "#[fg=colour6]#{pane_index} #[fg=yellow]#{pane_title}"
 set -g pane-border-status top
 
 setw -g window-status-format "#[fg=colour6][#I]#[fg=white]#W"
-setw -g window-status-current-format "#[bg=cyan]#[fg=white]#I#[fg=black,bold]#[bg=cyan] [#W]"
+setw -g window-status-current-format "#[fg=black,bold,bg=yellow]#I [#W]"
 set-window-option -g status-position top
 
 set -g status-fg white
@@ -125,17 +144,30 @@ set -g status-left "#[fg=yellow]Remote #[fg=green]#h >>"
 set-option -g renumber-windows on
 
 #tmux plugins
+set-environment -g TMUX_PLUGIN_MANAGER_PATH "~/.tmux/plugins/"
 set -g @plugin 'tmux-plugins/tpm'
 set -g @plugin 'tmux-plugins/tmux-resurrect'
 # set -g @resurrect-capture-pane-contents 'on'
 
-# This line must be at the very bottom of .tmux.conf:
-run '~/.tmux/plugins/tpm/tpm'
+# This line must be at the very bottom of /etc/tmux.conf:
+run-shell -b 'if [ -x "$HOME/.tmux/plugins/tpm/tpm" ] && [ -x "$HOME/.tmux/plugins/tmux-resurrect/resurrect.tmux" ]; then "$HOME/.tmux/plugins/tpm/tpm"; fi'
 TMUX_CONF
 
-install_tmux_config() {
-    if [[ -f "$conf" ]]; then
-        if cmp -s -- "$conf" "$new_conf"; then
+install_tmux_config() (
+    staged_conf=
+    cleanup() {
+        if [[ -n "$staged_conf" ]]; then
+            run_as_root rm -f -- "$staged_conf"
+        fi
+    }
+    trap cleanup EXIT
+
+    if [[ -e "$conf" || -L "$conf" ]]; then
+        if [[ ! -f "$conf" ]]; then
+            printf 'Existing system-wide configuration is not a regular file: %s\n' "$conf" >&2
+            exit 1
+        fi
+        if run_as_root cmp -s -- "$conf" "$new_conf"; then
             return 0
         else
             compare_status=$?
@@ -150,19 +182,35 @@ install_tmux_config() {
             exit 1
         fi
 
-        backup=$(mktemp -- "$conf.bak.XXXXXX")
-        if ! cp -p -- "$conf" "$backup"; then
-            rm -f -- "$backup"
+        backup=$(run_as_root mktemp -- "$conf.bak.XXXXXX")
+        if ! run_as_root cp -p -- "$conf" "$backup"; then
+            run_as_root rm -f -- "$backup"
             printf 'Could not back up the existing configuration: %s\n' "$conf" >&2
             exit 1
         fi
-        printf 'Saved previous configuration to %s\n' "$backup"
+        printf 'Saved previous system-wide configuration to %s\n' "$backup"
     fi
 
-    mv -fT -- "$new_conf" "$conf"
-}
+    staged_conf=$(run_as_root mktemp -- "$conf.tmp.XXXXXX")
+    run_as_root tee "$staged_conf" < "$new_conf" >/dev/null
+    run_as_root chmod 644 -- "$staged_conf"
+    run_as_root mv -fT -- "$staged_conf" "$conf"
+    staged_conf=
+)
 
 install_tmux_config
+
+candidate_session="sbx-deploy-plugin-setup-$$-$RANDOM"
+if ! /usr/bin/tmux new-session -d -s "$candidate_session"; then
+    printf '%s\n' 'Could not start a temporary tmux session for plugin setup.' >&2
+    exit 1
+fi
+setup_session=$candidate_session
+
+if ! /usr/bin/tmux set-environment -g TMUX_PLUGIN_MANAGER_PATH "$plugin_dir/"; then
+    printf '%s\n' 'Could not set the tmux plugin path in the running server.' >&2
+    exit 1
+fi
 
 if ! resurrect_ready; then
     if ! "$tpm_dir/bin/install_plugins"; then
@@ -175,6 +223,31 @@ if ! resurrect_ready; then
         printf 'TPM did not install an executable plugin at %s\n' "$resurrect_plugin" >&2
         exit 1
     fi
+fi
+
+if ! /usr/bin/tmux run-shell "$tpm_dir/tpm"; then
+    printf '%s\n' 'Could not load TPM plugins into the running tmux server.' >&2
+    exit 1
+fi
+
+if ! all_bindings=$(/usr/bin/tmux list-keys -T prefix); then
+    printf '%s\n' 'Could not inspect tmux prefix key bindings.' >&2
+    exit 1
+fi
+if plugin_bindings=$(printf '%s\n' "$all_bindings" |
+    grep -E '/tpm/bindings/install_plugins|/tmux-resurrect/scripts/(save|restore)\.sh'); then
+    :
+else
+    plugin_bindings=
+fi
+if [[ "$plugin_bindings" != *'/tpm/bindings/install_plugins'* ||
+      "$plugin_bindings" != *'/tmux-resurrect/scripts/save.sh'* ||
+      "$plugin_bindings" != *'/tmux-resurrect/scripts/restore.sh'* ]]; then
+    printf '%s\n' 'TPM or tmux-resurrect key bindings did not load:' >&2
+    if [[ -n "$plugin_bindings" ]]; then
+        printf '%s\n' "$plugin_bindings" >&2
+    fi
+    exit 1
 fi
 
 tmux_wrapper="$HOME/.local/bin/tmux"
@@ -239,14 +312,6 @@ for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
     fi
 done
 ensure_bash_path "$login_file"
-
-run_as_root() {
-    if (( EUID == 0 )); then
-        "$@"
-    else
-        sudo "$@"
-    fi
-}
 
 install_global_aliases() (
     global_bashrc=/etc/bash.bashrc
@@ -315,7 +380,7 @@ automatically. In an already-open Bash shell, run this before starting tmux:
 
 Start tmux by running: tmux
 To reload the configuration in an existing session:
-    tmux source-file ~/.tmux.conf
+    tmux source-file /etc/tmux.conf
 To verify the locale, start a fresh tmux server and run locale charmap
 inside it. Expected output: UTF-8.
 SBX_NEXT_STEPS
