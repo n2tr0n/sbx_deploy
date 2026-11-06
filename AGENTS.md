@@ -6,3 +6,12 @@
 - Review changes statically. The user runs the installer and tests it in their sandbox.
 - Ensure the ability to paste > press enter as the execution method for the script is always preserved
 - The sandbox has no sudo password, your installer can assume none is there
+
+Roadmap features: 
+
+- desktop
+- auth helpers
+- beautification
+- btop
+- tmux default tabs populated
+- custom prompts

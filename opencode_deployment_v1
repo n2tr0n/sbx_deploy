@@ -57,6 +57,7 @@ if [[ ( -e "$conf" || -L "$conf" ) && ! -f "$conf" ]]; then
 fi
 
 missing_packages=()
+# Query local package state first so completed reruns never contact APT mirrors.
 required_packages=(
     ansible strace ltrace plocate atop htop nmon nmap git net-tools
     unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
@@ -90,6 +91,8 @@ if (( ${#missing_packages[@]} > 0 )) || [[ "$missing_cmatrix" == true ]]; then
 fi
 
 clone_tpm() (
+    # Stage on the destination filesystem; publish without replacing an existing path.
+    # The subshell keeps this EXIT trap separate from the installer's later cleanup.
     mkdir -p -- "$plugin_dir"
     staging_dir=$(mktemp -d -- "$plugin_dir/.tpm-stage.XXXXXX")
     trap 'rm -rf -- "$staging_dir"' EXIT
@@ -167,6 +170,7 @@ install_tmux_config() (
             printf 'Existing system-wide configuration is not a regular file: %s\n' "$conf" >&2
             exit 1
         fi
+        # Compare before creating a backup or staging a replacement on a rerun.
         if run_as_root cmp -s -- "$conf" "$new_conf"; then
             return 0
         else
@@ -201,6 +205,7 @@ install_tmux_config() (
 install_tmux_config
 
 candidate_session="sbx-deploy-plugin-setup-$$-$RANDOM"
+# This uses the current/default server, so plugin setup also affects existing sessions.
 if ! /usr/bin/tmux new-session -d -s "$candidate_session"; then
     printf '%s\n' 'Could not start a temporary tmux session for plugin setup.' >&2
     exit 1
@@ -271,6 +276,7 @@ else
         trap 'rm -f -- "$staged_wrapper"' EXIT
         wrapper_contents > "$staged_wrapper"
         chmod 755 -- "$staged_wrapper"
+        # A hard link publishes the complete executable and fails if the name exists.
         ln -T -- "$staged_wrapper" "$tmux_wrapper"
     )
 fi
@@ -336,6 +342,7 @@ install_global_aliases() (
         exit 1
     fi
 
+    # Preserve the existing contents and metadata, then publish with a same-directory rename.
     staged_global=$(run_as_root mktemp -- "$global_bashrc.tmp.XXXXXX")
     run_as_root cp -p -- "$global_bashrc" "$staged_global"
     run_as_root tee -a "$staged_global" >/dev/null <<'SBX_ALIASES'
