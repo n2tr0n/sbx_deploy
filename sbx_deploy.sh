@@ -7,7 +7,7 @@
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
-#    including auth_all and individual auth_openai/auth_gh with clipboard copying.
+#    including auth_all and individual auth_opencode_openai/auth_gh with clipboard copying.
 # 8. Install abbreviated-path Bash prompts: red root, green other users.
 # 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
 # 10. Default OpenCode to GPT-6.1 Sol; use GPT-6 Luna for general/explore subagents.
@@ -74,7 +74,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_openai\n- auth_gh\n\n'
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_gh\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -895,9 +895,26 @@ original = ''.join(line for line in original.splitlines(keepends=True)
 old_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai"\''
 original = ''.join(line for line in original.splitlines(keepends=True)
                    if line.rstrip('\r\n') != old_alias)
-openai_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai-tty"\''
-if openai_alias not in original.splitlines():
-    original += '\n# SBX Deploy: OpenAI device-code login\n' + openai_alias + '\n'
+old_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai-tty"\''
+original = ''.join(line for line in original.splitlines(keepends=True)
+                   if line.rstrip('\r\n') != old_alias)
+openai_helper = '''auth_opencode_openai() {
+    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" "$@"
+}
+'''
+if openai_helper not in original:
+    original += '\n# SBX Deploy: OpenAI device-code login\n' + openai_helper
+previous_all = '''auth_all() {
+    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return
+    auth_gh
+}
+'''
+desired_all = '''auth_all() {
+    auth_opencode_openai || return
+    auth_gh
+}
+'''
+original = original.replace(previous_all, desired_all, 1)
 previous = '''# SBX Deploy: GitHub browser login
 login_gh() {
     unset GH_TOKEN GITHUB_TOKEN || return
@@ -926,7 +943,7 @@ if ! grep -Fxq -- '# SBX Deploy: authenticate all agents' "$global_bashrc"; then
 
 # SBX Deploy: authenticate all agents
 auth_all() {
-    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return
+    auth_opencode_openai || return
     auth_gh
 }
 SBX_AUTH_ALL
@@ -1177,7 +1194,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_openai\n- auth_gh\n\n'
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_gh\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac

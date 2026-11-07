@@ -15,3 +15,5 @@
 - desktop
 - tmux default tabs populated
 - second harness
+- tighten; clear the vibe coded slop
+- release/public
