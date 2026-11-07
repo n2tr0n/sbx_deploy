@@ -76,7 +76,7 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed: tmux/btop wrappers and aliases are ready.\n'
+                printf '\nShell refreshed.\n\n'
             else
                 printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
             fi
@@ -141,10 +141,10 @@ cat <<'SBX_BANNER'
  \_  _                                                                 _  _/
    \/     _______   _______  ___   ___                                  \/
    /\    /  _____/ /  __   \ \  \ /  /                                  /\
-  /  \   \____  \ /  __   <   \  V  /      .:: S B X   D E P L O Y ::. /  \
-  \  /  /_______//________/   /_/ \_\                                  \  /
-   \/  _______________________________________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX vAlpha-0.1          __/  /\
+  /  \   \____  \ /   _   <   \  V  /      .:: S B X   D E P L O Y ::. /  \
+  \  /  /————/  //  /_/   /   / / \ \                                  \  /
+   \/  /_______//________/___/_/___\_\________________________________  \/
+   /\  \__  Nitron's Deployment Script for SBX v-0.1a              __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
 
@@ -393,7 +393,6 @@ Reload your shell (installer changes ran in a subshell):
 
 SBX_NEXT_STEPS
         fi
-        printf '\nStart tmux: tmux\n' >&3
     fi
     if (( warning_count )); then
         printf '\n%s warning(s); see the log for details.\n' "$warning_count" >&3
@@ -828,7 +827,7 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed: tmux/btop wrappers and aliases are ready.\n'
+                printf '\nShell refreshed.\n\n'
             else
                 printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
             fi
