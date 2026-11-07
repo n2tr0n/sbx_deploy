@@ -7,8 +7,9 @@
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
-# 8. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 9. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+# 8. Install abbreviated-path Bash prompts: red root, green other users.
+# 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
+# 10. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
@@ -38,21 +39,11 @@ sbx_save_and_run() {
     # saved copy the same save-first behavior without relying on shell history,
     # a source filename, or an exported variable from the calling shell.
     {
-        # Keep the saved copy's feature header identical to the file header.
+        # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
-# Features, in execution order (keep current):
-# 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
-# 2. Show the SBX banner and verbose-mode command.
-# 3. Align stage/result/details columns; show APT names and retain five private logs.
-# 4. Validate paths; install missing packages (cmatrix alone omits recommends).
-# 5. Download missing TPM and tmux-resurrect checkouts atomically.
-# 6. Back up/update tmux configuration; load plugins and verify bindings.
-# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
-# 8. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 9. Clean up and summarize; refresh pasted/sourced interactive shells on success.
-#    Child-shell runs show manual reload instructions.
-#
+# Install sandbox tools, tmux plugins/configuration, shell helpers, and prompts;
+# upgrade existing OpenCode; skip completed work and retain five run logs.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -78,7 +69,7 @@ case $? in
             if source /etc/bash.bashrc; then
                 printf '\nShell refreshed.\n\n'
             else
-                printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
+                printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
         ;;
@@ -384,7 +375,7 @@ finish_installer() {
             "$separator" "$changed_count" "$separator" "$unchanged_count" \
             "$separator" "$verified_count" "$separator" "$((SECONDS - started_at))" | tee -a -- "$log_file" >&3
         if "$sbx_child_shell" || [[ $- != *i* ]]; then
-            warn 'Child-shell run: reload your calling shell or open a new shell to use the wrapper and aliases.'
+            warn 'Child-shell run: reload your calling shell or open a new shell to use wrappers, aliases, and prompts.'
             cat >&3 <<'SBX_NEXT_STEPS'
 
 Reload your shell (installer changes ran in a subshell):
@@ -769,6 +760,56 @@ else
     stage_done unchanged 'Wrappers, PATH, and aliases match'
 fi
 
+stage_begin 'Custom prompts' 'Checking global Bash prompts'
+if ! grep -Fxq -- '# SBX Deploy: custom system prompts' "$global_bashrc"; then
+    cat -- "$global_bashrc" > "$work_dir/bash-prompts.bashrc"
+    cat >> "$work_dir/bash-prompts.bashrc" <<'SBX_PROMPTS'
+
+# SBX Deploy: custom system prompts
+case $- in
+    *i*)
+        # Abbreviate every parent to its first character; keep the last name.
+        # Bash string operations preserve spaces/globs and avoid external tools.
+        short_path() {
+            local path=${PWD#/} component result=
+            while [[ $path == */* ]]; do
+                component=${path%%/*}
+                path=${path#*/}
+                [[ -z $component ]] || result+="/${component:0:1}"
+            done
+            printf '%s/%s' "$result" "$path"
+        }
+        _sbx_prompt() {
+            local status=$?
+            if (( EUID == 0 )); then
+                PS1='${debian_chroot:+($debian_chroot)}\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]$(short_path)\[\033[00m\]\$ '
+            else
+                PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]$(short_path)\[\033[00m\]\$ '
+            fi
+            return "$status"
+        }
+        # Personal .bashrc defaults run after /etc/bash.bashrc. Set PS1 just
+        # before display, preserving existing command hooks and their status.
+        _sbx_register_prompt() {
+            local command
+            for command in "${PROMPT_COMMAND[@]}"; do
+                [[ $command != _sbx_prompt ]] || return 0
+            done
+            PROMPT_COMMAND=("${PROMPT_COMMAND[@]}" _sbx_prompt)
+        }
+        _sbx_register_prompt
+        unset -f _sbx_register_prompt
+        ;;
+esac
+SBX_PROMPTS
+    replace_system_file "$work_dir/bash-prompts.bashrc" "$global_bashrc"
+fi
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Installed root and global prompts'
+else
+    stage_done unchanged 'Prompts already installed'
+fi
+
 stage_begin 'OpenCode' 'Checking or upgrading existing installation'
 opencode_binary=/home/agent/.opencode/bin/opencode
 upgrade_opencode() (
@@ -829,7 +870,7 @@ case $? in
             if source /etc/bash.bashrc; then
                 printf '\nShell refreshed.\n\n'
             else
-                printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
+                printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
         ;;

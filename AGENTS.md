@@ -15,5 +15,3 @@
 - desktop
 - auth helpers
 - tmux default tabs populated
-- custom prompts
-- latest opencode
