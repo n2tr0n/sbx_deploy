@@ -2,12 +2,13 @@
 # Features, in execution order (keep current):
 # 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
 # 2. Show the SBX banner and verbose-mode command.
-# 3. Report six stages, live APT progress, errors, and five retained private logs.
+# 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
-# 8. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+# 8. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
+# 9. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
@@ -43,12 +44,13 @@ sbx_save_and_run() {
 # Features, in execution order (keep current):
 # 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
 # 2. Show the SBX banner and verbose-mode command.
-# 3. Report six stages, live APT progress, errors, and five retained private logs.
+# 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
-# 8. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+# 8. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
+# 9. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
@@ -180,12 +182,10 @@ fi
 verbose=${SBX_VERBOSE:-0}
 animated=false
 green= amber= red= muted= reset=
-ok_symbol=OK skip_symbol=SKIP warn_symbol=WARN fail_symbol=FAIL
 separator=' | '
 spinner_frames=('|' '/' '-' '\')
 locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
 if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then
-    ok_symbol='✓' skip_symbol='–' warn_symbol='!' fail_symbol='✗'
     separator=' · '
     spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 fi
@@ -198,12 +198,17 @@ if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
 fi
 started_at=$SECONDS
 stage= operation= spinner_pid= tee_pid= setup_session=
-apt_status_file=
+apt_status_file= apt_output_file=
 stage_started=$SECONDS
 operation_offset=0
 changed_count=0 unchanged_count=0 verified_count=0 warning_count=0
 finishing=false
 
+# Pad plain text separately from ANSI colors so all terminal modes share the
+# same columns. Callers choose a newline or an in-place spinner refresh.
+report_row() {
+    printf '  %-18s | %s%-7s%s | %s' "$1" "${4-}" "$2" "$reset" "$3" >&3
+}
 stop_spinner() {
     if [[ -n $spinner_pid ]]; then
         kill "$spinner_pid" 2>/dev/null || :
@@ -241,6 +246,22 @@ start_spinner() {
             progress_text=$operation
             while :; do
                 if [[ -n $apt_status_file && -r $apt_status_file ]]; then
+                    # Status-Fd reports download counts, not package names.
+                    # APT's Get: rows identify the latest transfer started;
+                    # downloads from different mirrors can overlap.
+                    download_item=
+                    if [[ -n $apt_output_file && -r $apt_output_file ]]; then
+                        download_item=$(tail -n 80 -- "$apt_output_file" | awk '
+                            /^Get:[0-9]+ / {
+                                sub(/[[:space:]]+\[[^]]*\][[:space:]]*$/, "")
+                                # Archive rows end in package, arch, version.
+                                # Index rows end in e.g. Packages or InRelease.
+                                if (NF >= 7) name = $(NF - 2)
+                                else name = $NF
+                            }
+                            END { print name }
+                        ')
+                    fi
                     # APT writes structured progress separately from its normal
                     # output. Ignore partial/unknown records and retain the last
                     # valid update until the next one arrives.
@@ -253,14 +274,16 @@ start_spinner() {
                         fi
                         [[ $percent =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
                         case $kind in
-                            dlstatus) progress_text="${operation%% *} Download ${percent%%.*}% - $description" ;;
-                            pmstatus) progress_text="${operation%% *} Install ${percent%%.*}% - ${description:-$item}" ;;
+                            dlstatus) progress_text="${percent%%.*}% Download ${download_item:-files}" ;;
+                            # Put the package before the description so it stays
+                            # visible when the compact progress row is clipped.
+                            pmstatus) progress_text="${percent%%.*}% Install $item - $description" ;;
                         esac
                     done < <(tail -n 8 -- "$apt_status_file")
                 fi
-                printf '\r\033[2K  %s%s%s %-18s %.45s (%ss)' \
-                    "$muted" "${spinner_frames[frame]}" "$reset" "$stage" \
-                    "$progress_text" "$((SECONDS - stage_started))" >&3
+                printf '\r\033[2K' >&3
+                report_row "$stage" RUNNING \
+                    "${progress_text:0:45} (${spinner_frames[frame]} $((SECONDS - stage_started))s)" "$muted"
                 frame=$(( (frame + 1) % ${#spinner_frames[@]} ))
                 sleep 0.15
             done
@@ -275,7 +298,8 @@ stage_operation() {
     printf '\nOperation: %s\n' "$operation" >> "$log_file"
     operation_offset=$(wc -c < "$log_file")
     if ! "$animated"; then
-        printf '  ... %-18s %s\n' "$stage" "$operation" >&3
+        report_row "$stage" RUNNING "$operation" "$muted"
+        printf '\n' >&3
     fi
     capture_output
     start_spinner
@@ -288,17 +312,20 @@ stage_begin() {
     stage_operation "$2"
 }
 stage_done() {
-    local outcome=$1 message=$2 symbol=$ok_symbol color=$green
+    local outcome=$1 message=$2 result=UPDATED color=$green
     stop_spinner
     drain_output
     case $outcome in
         changed) changed_count=$((changed_count + 1)) ;;
         unchanged)
             unchanged_count=$((unchanged_count + 1))
-            symbol=$skip_symbol color=$muted ;;
-        verified) verified_count=$((verified_count + 1)) ;;
+            result=SKIPPED color=$muted ;;
+        verified)
+            verified_count=$((verified_count + 1))
+            result=CHECKED ;;
     esac
-    printf '  %s%s%s %-18s %s\n' "$color" "$symbol" "$reset" "$stage" "$message" >&3
+    report_row "$stage" "$result" "$message" "$color"
+    printf '\n' >&3
     printf 'Result: %s - %s\n' "$outcome" "$message" >> "$log_file"
     stage=
     capture_output
@@ -306,7 +333,8 @@ stage_done() {
 warn() {
     stop_spinner
     warning_count=$((warning_count + 1))
-    printf '  %s%s%s %s\n' "$amber" "$warn_symbol" "$reset" "$*" >&3
+    report_row "${stage:-Setup}" WARNING "$*" "$amber"
+    printf '\n' >&3
     printf 'Warning: %s\n' "$*" >> "$log_file"
     [[ -z $stage ]] || start_spinner
 }
@@ -344,7 +372,8 @@ finish_installer() {
     cleanup_installer
     exec 1>&3 2>&4
     if (( status != 0 )); then
-        printf '  %s%s%s %-18s %s\n' "$red" "$fail_symbol" "$reset" "${stage:-Setup}" "$reason" >&3
+        report_row "${stage:-Setup}" FAILED "$reason" "$red"
+        printf '\n' >&3
         printf 'Failed: %s\n' "$reason" >> "$log_file"
         printf '\n' >&3
         cat -- "$work_dir/excerpt" >&3
@@ -375,6 +404,8 @@ SBX_NEXT_STEPS
 trap finish_installer EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+report_row Stage Result Details "$muted"
+printf '\n  -------------------+---------+------------------------------------------\n' >&3
 capture_output
 
 stage_begin 'Checks' 'Checking existing setup'
@@ -423,7 +454,7 @@ fi
 if exists "$conf" && [[ ! -f "$conf" ]]; then
     die "Configuration does not point to a regular file: $conf"
 fi
-stage_done verified 'Ready'
+stage_done verified 'Paths validated'
 
 # Check local dpkg state before doing any network work. Keep cmatrix separate
 # because only that package should omit recommended dependencies. Python 3 and
@@ -448,17 +479,14 @@ package_installed cmatrix || missing_cmatrix=true
 if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
     package_count=${#missing_packages[@]}
     if "$missing_cmatrix"; then package_count=$((package_count + 1)); fi
-    package_step=0
-    package_steps=2
-    if (( ${#missing_packages[@]} )) && "$missing_cmatrix"; then package_steps=3; fi
     apt_status_file="$work_dir/apt-status"
+    apt_output_file="$work_dir/apt-output"
     run_apt() {
         local message=$1
         shift
         stop_spinner
-        (umask 077; : > "$apt_status_file")
-        package_step=$((package_step + 1))
-        stage_operation "$package_step/$package_steps $message"
+        (umask 077; : > "$apt_status_file"; : > "$apt_output_file")
+        stage_operation "$message"
         # sudo normally closes extra descriptors. Open the progress descriptor
         # after elevation, using positional arguments to preserve path quoting.
         # Call this helper directly so errexit propagates an apt failure.
@@ -466,7 +494,7 @@ if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
             exec 5> "$1"
             shift
             exec apt-get -o APT::Status-Fd=5 "$@"
-        ' sbx-apt "$apt_status_file" "$@"
+        ' sbx-apt "$apt_status_file" "$@" | tee -- "$apt_output_file"
     }
     run_apt 'Refreshing package lists' update
     if (( ${#missing_packages[@]} )); then
@@ -476,7 +504,7 @@ if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
         run_apt 'Installing cmatrix' install -y --no-install-recommends cmatrix
     fi
     stage_done changed "Installed $package_count missing packages"
-    apt_status_file=
+    apt_status_file= apt_output_file=
 else
     stage_done unchanged 'Already installed'
 fi
@@ -611,7 +639,7 @@ if [[ -e $work_dir/changed ]]; then
         stage_done changed 'Installed'
     fi
 else
-    stage_done unchanged 'Unchanged'
+    stage_done unchanged 'Configuration matches'
 fi
 
 # Use the current/default server so existing sessions gain the plugin bindings.
@@ -628,7 +656,7 @@ all_bindings=$(/usr/bin/tmux list-keys -T prefix) || die 'Cannot inspect tmux bi
 for binding in /tpm/bindings/install_plugins /tmux-resurrect/scripts/{save,restore}.sh; do
     [[ "$all_bindings" == *"$binding"* ]] || die "Plugin binding did not load: $binding"
 done
-stage_done verified 'Verified'
+stage_done verified 'Plugin bindings loaded'
 
 stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
 tmux_wrapper="$HOME/.local/bin/tmux"
@@ -739,7 +767,52 @@ fi
 if [[ -e $work_dir/changed ]]; then
     stage_done changed 'Updated wrappers, PATH, or aliases'
 else
-    stage_done unchanged 'Unchanged'
+    stage_done unchanged 'Wrappers, PATH, and aliases match'
+fi
+
+stage_begin 'OpenCode' 'Checking or upgrading existing installation'
+opencode_binary=/home/agent/.opencode/bin/opencode
+upgrade_opencode() (
+    local state_file="$log_dir/opencode-upgrade.sha256" before after staged=
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    [[ -f $opencode_binary && -x $opencode_binary ]] ||
+        die "OpenCode is not an executable regular file: $opencode_binary"
+    if exists "$state_file"; then
+        [[ -f $state_file && ! -L $state_file && -r $state_file ]] ||
+            die "Cannot read OpenCode upgrade state: $state_file"
+    fi
+    before=$(sha256sum -- "$opencode_binary")
+    # A completed upgrade is remembered locally, avoiding network checks on an
+    # identical rerun. A changed binary or missing state triggers another check.
+    if [[ -f $state_file && $(< "$state_file") == "$before" ]]; then
+        return 0
+    fi
+    "$opencode_binary" upgrade --method curl
+    [[ -f $opencode_binary && -x $opencode_binary ]] ||
+        die "OpenCode upgrade left no usable executable: $opencode_binary"
+    after=$(sha256sum -- "$opencode_binary")
+    # Publish completion only after success. Interrupted/failed upgrades remain
+    # eligible for retry; the marker itself is replaced atomically.
+    staged=$(umask 077; mktemp -- "$state_file.tmp.XXXXXX")
+    printf '%s\n' "$after" > "$staged"
+    mv -fT -- "$staged" "$state_file"
+    staged=
+    touch -- "$work_dir/opencode-checked"
+    if [[ $before != "$after" ]]; then
+        touch -- "$work_dir/changed"
+    fi
+)
+if ! exists "$opencode_binary"; then
+    stage_done unchanged 'Not installed'
+else
+    upgrade_opencode
+    if [[ -e $work_dir/changed ]]; then
+        stage_done changed 'Upgraded existing installation'
+    elif [[ -e $work_dir/opencode-checked ]]; then
+        stage_done verified 'Already up to date'
+    else
+        stage_done unchanged 'Upgrade already completed for this binary'
+    fi
 fi
 )
 SBX_DEPLOY_PAYLOAD

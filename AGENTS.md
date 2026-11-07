@@ -14,7 +14,6 @@
 
 - desktop
 - auth helpers
-- btop
 - tmux default tabs populated
 - custom prompts
 - latest opencode
