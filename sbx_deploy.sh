@@ -6,7 +6,7 @@
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
-# 7. Install the UTF-8 tmux wrapper, Bash PATH entries, and system aliases once.
+# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
 # 8. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions.
 #
@@ -47,7 +47,7 @@ sbx_save_and_run() {
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
-# 7. Install the UTF-8 tmux wrapper, Bash PATH entries, and system aliases once.
+# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
 # 8. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions.
 #
@@ -74,7 +74,7 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed: tmux wrapper and aliases are ready.\n'
+                printf '\nShell refreshed: tmux/btop wrappers and aliases are ready.\n'
             else
                 printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
             fi
@@ -433,7 +433,7 @@ package_installed() {
     [[ $(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null) == installed ]]
 }
 required_packages=(
-    ansible strace ltrace plocate atop htop nmon nmap git net-tools
+    ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
     unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
     libaa-bin python3 python3-passlib
 )
@@ -630,7 +630,7 @@ for binding in /tpm/bindings/install_plugins /tmux-resurrect/scripts/{save,resto
 done
 stage_done verified 'Verified'
 
-stage_begin 'Shell setup' 'Checking wrapper, PATH, and aliases'
+stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
 tmux_wrapper="$HOME/.local/bin/tmux"
 wrapper_contents() {
     cat <<'TMUX_WRAPPER'
@@ -638,24 +638,33 @@ wrapper_contents() {
 LC_ALL=C.utf8 exec /usr/bin/tmux -u "$@"
 TMUX_WRAPPER
 }
+btop_wrapper_contents() {
+    cat <<'BTOP_WRAPPER'
+#!/bin/sh
+LC_ALL=C.UTF-8 exec /usr/bin/btop "$@"
+BTOP_WRAPPER
+}
 
 # Never replace an existing wrapper. A hard link publishes the complete executable
 # atomically and fails if another process creates the destination first.
-if exists "$tmux_wrapper"; then
-    [[ -f "$tmux_wrapper" && -x "$tmux_wrapper" ]] &&
-        cmp -s -- "$tmux_wrapper" <(wrapper_contents) ||
-        die "Existing tmux wrapper differs or is unusable: $tmux_wrapper"
-else
-    (
-        mkdir -p -- "${tmux_wrapper%/*}"
-        staged=$(mktemp -- "$tmux_wrapper.tmp.XXXXXX")
-        trap 'rm -f -- "$staged"' EXIT
-        wrapper_contents > "$staged"
+ensure_wrapper() (
+    local target=$1 contents=$2 staged=
+    trap 'if [[ -n "$staged" ]]; then rm -f -- "$staged"; fi' EXIT
+    if exists "$target"; then
+        [[ -f "$target" && -x "$target" ]] &&
+            cmp -s -- "$target" <("$contents") ||
+            die "Existing wrapper differs or is unusable: $target"
+    else
+        mkdir -p -- "${target%/*}"
+        staged=$(mktemp -- "$target.tmp.XXXXXX")
+        "$contents" > "$staged"
         chmod 755 -- "$staged"
-        ln -T -- "$staged" "$tmux_wrapper"
+        ln -T -- "$staged" "$target"
         touch -- "$work_dir/changed"
-    )
-fi
+    fi
+)
+ensure_wrapper "$tmux_wrapper" wrapper_contents
+ensure_wrapper "$HOME/.local/bin/btop" btop_wrapper_contents
 
 ensure_bash_path() (
     local startup_file=$1 staged= marker='# SBX Deploy: put the tmux wrapper on PATH'
@@ -728,7 +737,7 @@ SBX_ALIASES
 fi
 
 if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Updated wrapper, PATH, or aliases'
+    stage_done changed 'Updated wrappers, PATH, or aliases'
 else
     stage_done unchanged 'Unchanged'
 fi
@@ -746,7 +755,7 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed: tmux wrapper and aliases are ready.\n'
+                printf '\nShell refreshed: tmux/btop wrappers and aliases are ready.\n'
             else
                 printf '\nWARN Could not reload aliases; run: source /etc/bash.bashrc\n' >&2
             fi
