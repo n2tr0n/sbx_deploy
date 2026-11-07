@@ -13,5 +13,5 @@
 # Roadmap features
 
 - desktop
-- auth helpers
 - tmux default tabs populated
+- second harness

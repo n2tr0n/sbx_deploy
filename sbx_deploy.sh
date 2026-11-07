@@ -6,11 +6,13 @@
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Download missing TPM and tmux-resurrect checkouts atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
-# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases once.
+# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
+#    including auth_all and individual auth_openai/auth_gh with clipboard copying.
 # 8. Install abbreviated-path Bash prompts: red root, green other users.
 # 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 10. Clean up and summarize; refresh pasted/sourced interactive shells on success.
-#    Child-shell runs show manual reload instructions.
+# 10. Default OpenCode to GPT-6.1 Sol; use GPT-6 Luna for general/explore subagents.
+# 11. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+#    Child-shell runs show manual reload instructions; list agent login commands.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 # Save before starting the installer, including when this entire file is pasted
@@ -42,8 +44,8 @@ sbx_save_and_run() {
         # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
-# Install sandbox tools, tmux plugins/configuration, shell helpers, and prompts;
-# upgrade existing OpenCode; skip completed work and retain five run logs.
+# Install sandbox tools, tmux configuration, login helpers/terminal clipboard, and prompts;
+# upgrade OpenCode; default to Sol with Luna subagents; retain five run logs.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -67,11 +69,12 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed.\n\n'
+                printf '\nShell refreshed.\n'
             else
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_openai\n- auth_gh\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -684,6 +687,113 @@ ensure_wrapper() (
 ensure_wrapper "$tmux_wrapper" wrapper_contents
 ensure_wrapper "$HOME/.local/bin/btop" btop_wrapper_contents
 
+# Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
+gh_clipboard_contents() {
+    cat <<'SBX_GH_CLIPBOARD'
+#!/bin/sh
+set -eu
+# GitHub CLI's clipboard library invokes xclip with these write arguments.
+case "$*" in
+    '-in -selection clipboard') ;;
+    *) printf 'SBX clipboard adapter supports writes only.\n' >&2; exit 1 ;;
+esac
+if [ -n "${TMUX:-}" ]; then
+    # Let tmux forward the clipboard to the outer terminal using its settings.
+    exec /usr/bin/tmux load-buffer -w -
+fi
+encoded=$(base64 -w0)
+printf '\033]52;c;%s\007' "$encoded" > /dev/tty
+SBX_GH_CLIPBOARD
+}
+ensure_wrapper "$HOME/.local/lib/sbx-deploy/gh-clipboard/xclip" gh_clipboard_contents
+
+# Keep OpenCode output attached to a pseudoterminal so its Enter/browser prompt
+# stays interactive. Forward output live without saving authentication to disk.
+openai_auth_contents() {
+    cat <<'SBX_OPENAI_AUTH'
+#!/usr/bin/env python3
+import os
+import errno
+import fcntl
+from pathlib import Path
+import pty
+import re
+import signal
+import subprocess
+import sys
+import termios
+
+command = ['/home/agent/.opencode/bin/opencode', 'auth', 'login', 'openai',
+           '--method', 'chatgpt-headless']
+adapter = Path.home() / '.local/lib/sbx-deploy/gh-clipboard/xclip'
+ansi = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
+code_pattern = re.compile(rb'Enter code:[ \t]*([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)(?=[ \t\r\n])')
+pending = b''
+attempted = False
+
+def interrupted(signum, frame):
+    raise SystemExit(128 + signum)
+
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGHUP, interrupted)
+master, slave = pty.openpty()
+# Input stays on the real terminal: OpenCode receives Enter and keyboard signals
+# directly. Both output streams see a terminal instead of a noninteractive pipe.
+try:
+    if sys.stdin.isatty():
+        size = fcntl.ioctl(sys.stdin.fileno(), termios.TIOCGWINSZ, b'\0' * 8)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, size)
+    process = subprocess.Popen(command, stdout=slave, stderr=slave)
+except BaseException:
+    os.close(master)
+    raise
+finally:
+    os.close(slave)
+try:
+    while True:
+        try:
+            chunk = os.read(master, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:  # Linux PTY EOF after the child exits.
+                break
+            raise
+        if not chunk:
+            break
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+        if attempted:
+            continue
+        pending = (pending + chunk)[-16384:]
+        match = code_pattern.search(ansi.sub(b'', pending))
+        if match:
+            attempted = True
+            try:
+                subprocess.run([str(adapter), '-in', '-selection', 'clipboard'],
+                               input=match[1], check=True, timeout=5)
+                print('\nDevice code sent to terminal clipboard.', flush=True)
+            except (OSError, subprocess.SubprocessError):
+                print('\nClipboard unavailable; copy the displayed device code manually.',
+                      file=sys.stderr, flush=True)
+    status = process.wait()
+except BaseException as error:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    if isinstance(error, KeyboardInterrupt):
+        sys.exit(130)
+    raise
+finally:
+    os.close(master)
+sys.exit(status if status >= 0 else 128 - status)
+SBX_OPENAI_AUTH
+}
+# Use a new managed path so existing wrappers remain safe to migrate on rerun.
+ensure_wrapper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
+
 ensure_bash_path() (
     local startup_file=$1 staged= marker='# SBX Deploy: put the tmux wrapper on PATH'
     trap 'if [[ -n "$staged" ]]; then rm -f -- "$staged"; fi' EXIT
@@ -752,6 +862,75 @@ alias netstat-numeric='netstat -tulpn'
 alias netstat-names='netstat -tulp'
 SBX_ALIASES
     replace_system_file "$work_dir/bash.bashrc" "$global_bashrc"
+fi
+
+# A shell function clears tokens in the calling shell, so subsequent gh commands
+# use the saved browser login too. An executable could only clear its own env.
+cat > "$work_dir/gh-login.block" <<'SBX_GH_LOGIN'
+# SBX Deploy: GitHub browser login
+auth_gh() {
+    unset GH_TOKEN GITHUB_TOKEN || return
+    # Scope the adapter and X11 backend selection to this gh process.
+    command env -u WAYLAND_DISPLAY \
+        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \
+        gh auth login --hostname github.com --git-protocol https --web --clipboard
+}
+SBX_GH_LOGIN
+# Migrate known login helpers in place; preserve other aliases and functions.
+python3 - "$global_bashrc" "$work_dir/gh-login.block" "$work_dir/gh-login.bashrc" <<'SBX_GH_HELPER'
+from pathlib import Path
+import sys
+
+source, block, staged = map(Path, sys.argv[1:])
+original = source.read_text()
+desired = block.read_text()
+openai_command = '/home/agent/.opencode/bin/opencode auth login openai --method chatgpt-headless'
+for old_name in ('openai_login', 'login_openai'):
+    old_alias = f"alias {old_name}='{openai_command}'"
+    original = ''.join(line for line in original.splitlines(keepends=True)
+                       if line.rstrip('\r\n') != old_alias)
+old_alias = f"alias auth_openai='{openai_command}'"
+original = ''.join(line for line in original.splitlines(keepends=True)
+                   if line.rstrip('\r\n') != old_alias)
+old_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai"\''
+original = ''.join(line for line in original.splitlines(keepends=True)
+                   if line.rstrip('\r\n') != old_alias)
+openai_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai-tty"\''
+if openai_alias not in original.splitlines():
+    original += '\n# SBX Deploy: OpenAI device-code login\n' + openai_alias + '\n'
+previous = '''# SBX Deploy: GitHub browser login
+login_gh() {
+    unset GH_TOKEN GITHUB_TOKEN || return
+    command gh auth login --hostname github.com --git-protocol https --web
+}
+'''
+if desired in original:
+    updated = original
+elif desired.replace('auth_gh() {', 'login_gh() {') in original:
+    updated = original.replace(desired.replace('auth_gh() {', 'login_gh() {'), desired, 1)
+elif previous in original:
+    updated = original.replace(previous, desired, 1)
+elif '# SBX Deploy: GitHub browser login' in original:
+    sys.exit('Existing SBX GitHub auth helper was edited; cannot update automatically.')
+else:
+    updated = original + '\n' + desired
+staged.write_text(updated)
+SBX_GH_HELPER
+replace_system_file "$work_dir/gh-login.bashrc" "$global_bashrc"
+
+# Both commands run in this shell so auth_gh also clears inherited tokens here.
+# Stop if OpenAI login fails or is cancelled; leave individual helpers available.
+if ! grep -Fxq -- '# SBX Deploy: authenticate all agents' "$global_bashrc"; then
+    cat -- "$global_bashrc" > "$work_dir/auth-all.bashrc"
+    cat >> "$work_dir/auth-all.bashrc" <<'SBX_AUTH_ALL'
+
+# SBX Deploy: authenticate all agents
+auth_all() {
+    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return
+    auth_gh
+}
+SBX_AUTH_ALL
+    replace_system_file "$work_dir/auth-all.bashrc" "$global_bashrc"
 fi
 
 if [[ -e $work_dir/changed ]]; then
@@ -854,6 +1033,131 @@ else
         stage_done unchanged 'Upgrade already completed for this binary'
     fi
 fi
+
+stage_begin 'OpenCode models' 'Checking main and subagent models'
+opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+[[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
+# JSONC takes precedence when both files exist. Edit only the effective file.
+opencode_config="$opencode_config_dir/opencode.json"
+if exists "$opencode_config_dir/opencode.jsonc"; then
+    opencode_config="$opencode_config_dir/opencode.jsonc"
+fi
+if exists "$opencode_config"; then
+    [[ -f $opencode_config && -r $opencode_config && ! -L $opencode_config ]] ||
+        die "OpenCode configuration must be a readable regular file, not a symlink: $opencode_config"
+fi
+# Mask JSONC comments/trailing commas without shifting character offsets, then
+# replace only managed model settings. Other text, including comments, survives.
+python3 - "$opencode_config" "$work_dir/opencode-model.json" <<'SBX_OPENCODE_MODEL'
+import json
+from pathlib import Path
+import re
+import sys
+
+source, staged = map(Path, sys.argv[1:])
+# Current latest releases; explicit IDs keep reruns offline and reproducible.
+main_model = "openai/gpt-6.1-sol"
+subagent_model = "openai/gpt-6-luna"
+desired = {
+    "model": main_model,
+    "agents": {
+        "build": {"model": main_model},
+        "plan": {"model": main_model},
+        "general": {"model": subagent_model},
+        "explore": {"model": subagent_model},
+    },
+}
+if source.exists():
+    with source.open(encoding="utf-8", newline="") as handle:
+        original = handle.read()
+else:
+    original = '{\n  "$schema": "https://opencode.ai/config.json"\n}\n'
+
+# Match strings first so comment markers inside strings remain untouched.
+tokens = r'"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/'
+clean = re.sub(tokens, lambda m: m[0] if m[0].startswith('"') else
+               re.sub(r'[^\r\n]', ' ', m[0]), original)
+clean = re.sub(r'"(?:\\.|[^"\\])*"|,(\s*[}\]])',
+               lambda m: ' ' + m[1] if m[1] is not None else m[0], clean)
+try:
+    data = json.loads(clean)
+except ValueError as error:
+    sys.exit(f"Cannot parse OpenCode configuration {source}: {error}")
+if not isinstance(data, dict):
+    sys.exit(f"OpenCode configuration must contain an object: {source}")
+
+# Walk only managed object paths, including duplicate keys, preserving other
+# agent settings and custom agents. Never replace an unexpected non-object.
+decoder = json.JSONDecoder()
+edits = []
+newline = '\r\n' if '\r\n' in original else '\n'
+
+def skip_space(position):
+    while clean[position].isspace():
+        position += 1
+    return position
+
+def update_object(start, wanted):
+    if clean[start] != '{':
+        sys.exit(f"Expected an object for managed agent settings in {source}")
+    position = start + 1
+    seen = set()
+    has_members = False
+    while True:
+        position = skip_space(position)
+        if clean[position] == '}':
+            break
+        key, position = decoder.raw_decode(clean, position)
+        position = skip_space(position) + 1  # Validated colon.
+        value_start = skip_space(position)
+        value, position = decoder.raw_decode(clean, value_start)
+        seen.add(key)
+        has_members = True
+        if key in wanted:
+            replacement = wanted[key]
+            if isinstance(replacement, dict):
+                update_object(value_start, replacement)
+            elif value != replacement:
+                edits.append((value_start, position, json.dumps(replacement)))
+        position = skip_space(position)
+        if clean[position] == ',':
+            position += 1
+    missing = {key: value for key, value in wanted.items() if key not in seen}
+    if missing:
+        members = (json.dumps(key) + ': ' + json.dumps(value)
+                   for key, value in missing.items())
+        addition = newline + '  ' + (',' + newline + '  ').join(members)
+        addition += ',' if has_members else ''
+        edits.append((start + 1, start + 1, addition))
+
+update_object(clean.index('{'), desired)
+updated = original
+for start, end, replacement in sorted(edits, reverse=True):
+    updated = updated[:start] + replacement + updated[end:]
+if updated != original or not source.exists():
+    with staged.open('w', encoding='utf-8', newline='') as handle:
+        handle.write(updated)
+SBX_OPENCODE_MODEL
+install_opencode_model() (
+    local staged=
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    if exists "$opencode_config"; then
+        replace_system_file "$work_dir/opencode-model.json" "$opencode_config"
+    else
+        mkdir -p -- "$opencode_config_dir"
+        staged=$(umask 077; mktemp -- "$opencode_config.tmp.XXXXXX")
+        cat -- "$work_dir/opencode-model.json" > "$staged"
+        # Publish without overwriting a concurrently created configuration.
+        # Keep a new config private and owned by the invoking sandbox user.
+        ln -T -- "$staged" "$opencode_config"
+    fi
+)
+if [[ -f $work_dir/opencode-model.json ]]; then
+    install_opencode_model
+    stage_done changed 'Main: GPT-6.1 Sol; subagents: GPT-6 Luna'
+else
+    stage_done unchanged 'Sol main and Luna subagent defaults match'
+fi
 )
 SBX_DEPLOY_PAYLOAD
 )
@@ -868,11 +1172,12 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed.\n\n'
+                printf '\nShell refreshed.\n'
             else
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_openai\n- auth_gh\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
