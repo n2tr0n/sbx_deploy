@@ -4,13 +4,15 @@
 # 2. Show the SBX banner and verbose-mode command.
 # 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
-# 5. Download missing TPM and tmux-resurrect checkouts atomically.
+# 5. Install missing Codex CLI; download missing TPM/tmux-resurrect atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
-#    including auth_all and individual auth_opencode_openai/auth_gh with clipboard copying.
+#    including auth_all and individual OpenCode/Codex/GitHub auth with clipboard copying.
+#    Codex device login opens the browser with a manual URL fallback.
+#    Auth helpers skip existing logins; --force repeats login for one or all tools.
 # 8. Install abbreviated-path Bash prompts: red root, green other users.
 # 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 10. Default OpenCode to GPT-6.1 Sol; use GPT-6 Luna for general/explore subagents.
+# 10. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
 # 11. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions; list agent login commands.
 #
@@ -45,7 +47,7 @@ sbx_save_and_run() {
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
 # Install sandbox tools, tmux configuration, login helpers/terminal clipboard, and prompts;
-# upgrade OpenCode; default to Sol with Luna subagents; retain five run logs.
+# install Codex; skip existing logins unless --force; use Sol/Luna; keep five logs.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -74,7 +76,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_gh\n\n'
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_codex_openai\n- auth_gh\n\nAdd --force to any auth command to repeat login.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -133,11 +135,11 @@ cat <<'SBX_BANNER'
   .-----------------------------------------------------------------------.
  /__________  N I T R O N   P R E S E N T S  ______________________________\
  \_  _                                                                 _  _/
-   \/     _______   _______  ___   ___                                  \/
-   /\    /  _____/ /  __   \ \  \ /  /                                  /\
-  /  \   \____  \ /   _   <   \  V  /      .:: S B X   D E P L O Y ::. /  \
-  \  /  /————/  //  /_/   /   / / \ \                                  \  /
-   \/  /_______//________/___/_/___\_\________________________________  \/
+   \/     _______   _______ ___   ___                                   \/
+   /\    /  _____/ /  __   \\  \ /  /                                   /\
+  /  \   \____  \ /  /_/  <  \  V  /       .:: S B X   D E P L O Y ::. /  \
+  \  /  /————/  //  /_/   /  /  \  \                                   \  /
+   \/  /_______//________/__/__/_\__\_________________________________  \/
    /\  \__  Nitron's Deployment Script for SBX v-0.1a              __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
@@ -459,7 +461,7 @@ package_installed() {
 required_packages=(
     ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
     unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
-    libaa-bin python3 python3-passlib
+    libaa-bin python3 python3-passlib python3-tomlkit
 )
 missing_packages=()
 for package in "${required_packages[@]}"; do
@@ -498,6 +500,39 @@ if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
     fi
     stage_done changed "Installed $package_count missing packages"
     apt_status_file= apt_output_file=
+else
+    stage_done unchanged 'Already installed'
+fi
+
+stage_begin 'Codex' 'Checking existing installation'
+install_codex() (
+    local binary
+    # Also find a previous standalone install before the calling shell reloads.
+    # Supplying PATH prevents the upstream installer from editing shell files.
+    export PATH="$HOME/.local/bin:$PATH"
+    binary=$(type -P codex || :)
+    if [[ -n $binary ]]; then
+        [[ -f $binary && -x $binary ]] || die "Codex is not a usable executable: $binary"
+        "$binary" --version
+        return 0
+    fi
+    # Never overwrite an unrelated file or dangling user-created symlink.
+    if exists "$HOME/.local/bin/codex"; then
+        die "Existing Codex path is unusable; repair it before retrying: $HOME/.local/bin/codex"
+    fi
+    # pipefail preserves curl failures; noninteractive mode avoids a launch prompt.
+    # Upstream stages releases and publishes links only after validating them,
+    # so an interrupted download can be retried without touching credentials.
+    curl -fsSL https://chatgpt.com/codex/install.sh |
+        CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR="$HOME/.local/bin" sh
+    [[ -f $HOME/.local/bin/codex && -x $HOME/.local/bin/codex ]] ||
+        die 'Codex installation left no usable executable.'
+    "$HOME/.local/bin/codex" --version
+    touch -- "$work_dir/changed"
+)
+install_codex
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Installed Codex CLI'
 else
     stage_done unchanged 'Already installed'
 fi
@@ -707,8 +742,8 @@ SBX_GH_CLIPBOARD
 }
 ensure_wrapper "$HOME/.local/lib/sbx-deploy/gh-clipboard/xclip" gh_clipboard_contents
 
-# Keep OpenCode output attached to a pseudoterminal so its Enter/browser prompt
-# stays interactive. Forward output live without saving authentication to disk.
+# Keep auth output attached to a pseudoterminal so prompts stay interactive.
+# Forward output live without saving authentication output to installer logs.
 openai_auth_contents() {
     cat <<'SBX_OPENAI_AUTH'
 #!/usr/bin/env python3
@@ -723,11 +758,27 @@ import subprocess
 import sys
 import termios
 
+SBX_OPENAI_AUTH
+    if [[ ${1-} == codex ]]; then
+        printf '%s\n' "command = ['codex', 'login', '--device-auth']"
+    else
+        cat <<'SBX_OPENAI_COMMAND'
 command = ['/home/agent/.opencode/bin/opencode', 'auth', 'login', 'openai',
            '--method', 'chatgpt-headless']
+SBX_OPENAI_COMMAND
+    fi
+    cat <<'SBX_OPENAI_AUTH'
 adapter = Path.home() / '.local/lib/sbx-deploy/gh-clipboard/xclip'
 ansi = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
+SBX_OPENAI_AUTH
+    if [[ ${1-} == codex ]]; then
+        printf '%s\n' "code_pattern = re.compile(rb'\b([A-Z0-9]{4,8}-[A-Z0-9]{4,8})\b')"
+    else
+        cat <<'SBX_OPENAI_PATTERN'
 code_pattern = re.compile(rb'Enter code:[ \t]*([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)(?=[ \t\r\n])')
+SBX_OPENAI_PATTERN
+    fi
+    cat <<'SBX_OPENAI_AUTH'
 pending = b''
 attempted = False
 
@@ -774,6 +825,23 @@ try:
             except (OSError, subprocess.SubprocessError):
                 print('\nClipboard unavailable; copy the displayed device code manually.',
                       file=sys.stderr, flush=True)
+SBX_OPENAI_AUTH
+    if [[ ${1-} == codex ]]; then
+        cat <<'SBX_CODEX_BROWSER'
+            # Open after copying the code, once per login. Honor BROWSER through
+            # Python's browser selection; keep opener output out of the auth UI.
+            url = 'https://auth.openai.com/codex/device'
+            try:
+                subprocess.run(
+                    [sys.executable, '-c',
+                     'import sys, webbrowser; sys.exit(0 if webbrowser.open(sys.argv[1], new=2) else 1)',
+                     url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, check=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                print(f'Open this URL in your browser: {url}', flush=True)
+SBX_CODEX_BROWSER
+    fi
+    cat <<'SBX_OPENAI_AUTH'
     status = process.wait()
 except BaseException as error:
     if process.poll() is None:
@@ -793,6 +861,8 @@ SBX_OPENAI_AUTH
 }
 # Use a new managed path so existing wrappers remain safe to migrate on rerun.
 ensure_wrapper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
+codex_auth_contents() { openai_auth_contents codex; }
+ensure_wrapper "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" codex_auth_contents
 
 ensure_bash_path() (
     local startup_file=$1 staged= marker='# SBX Deploy: put the tmux wrapper on PATH'
@@ -869,7 +939,15 @@ fi
 cat > "$work_dir/gh-login.block" <<'SBX_GH_LOGIN'
 # SBX Deploy: GitHub browser login
 auth_gh() {
+    case $#:${1-} in
+        0:|1:--force) ;;
+        *) printf 'Usage: auth_gh [--force]\n' >&2; return 2 ;;
+    esac
     unset GH_TOKEN GITHUB_TOKEN || return
+    if [[ ${1-} != --force ]] && command gh auth status --active --hostname github.com >/dev/null 2>&1; then
+        printf 'GitHub: already authenticated; skipping login.\n'
+        return 0
+    fi
     # Scope the adapter and X11 backend selection to this gh process.
     command env -u WAYLAND_DISPLAY \
         PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \
@@ -902,25 +980,117 @@ openai_helper = '''auth_opencode_openai() {
     "$HOME/.local/lib/sbx-deploy/auth-openai-tty" "$@"
 }
 '''
+previous_openai_helper = openai_helper
+openai_helper = '''auth_opencode_openai() {
+    local auth_status
+    case $#:${1-} in
+        0:|1:--force) ;;
+        *) printf 'Usage: auth_opencode_openai [--force]\\n' >&2; return 2 ;;
+    esac
+    # auth list reports stored providers, including refreshable OAuth sessions.
+    if [[ ${1-} != --force ]] &&
+       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&
+       printf '%s' "$auth_status" | python3 -c '
+import re
+import sys
+text = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())
+sys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)
+'; then
+        printf 'OpenCode OpenAI: saved credentials found; skipping login.\\n'
+        return 0
+    fi
+    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"
+}
+'''
+original = original.replace(previous_openai_helper, openai_helper, 1)
+# Migrate the exact previous status parser, preserving any user-edited helper.
+previous_status_helper = openai_helper.replace(
+    r'\bOpenAI[ \t]+(?:\(?(?:oauth|api)\b|OpenAI[ \t]+stored\b)',
+    r'\bOpenAI\s+\(?(?:oauth|api)\b')
+original = original.replace(previous_status_helper, openai_helper, 1)
 if openai_helper not in original:
+    if 'auth_opencode_openai() {' in original:
+        sys.exit('Existing OpenCode auth helper differs; cannot update automatically.')
     original += '\n# SBX Deploy: OpenAI device-code login\n' + openai_helper
+codex_helper = '''# SBX Deploy: Codex OpenAI device-code login
+auth_codex_openai() {
+    command env PATH="$HOME/.local/bin:$PATH" \\
+        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" "$@"
+}
+'''
+# Migrate only the exact previous managed helper, preserving user edits.
+previous_codex_helper = codex_helper.replace('auth-codex-openai-browser-tty',
+                                            'auth-codex-openai-tty')
+original = original.replace(previous_codex_helper, codex_helper, 1)
+previous_codex_helper = codex_helper
+codex_helper = '''# SBX Deploy: Codex OpenAI device-code login
+auth_codex_openai() {
+    case $#:${1-} in
+        0:|1:--force) ;;
+        *) printf 'Usage: auth_codex_openai [--force]\\n' >&2; return 2 ;;
+    esac
+    if [[ ${1-} != --force ]] &&
+       command env PATH="$HOME/.local/bin:$PATH" codex login status >/dev/null 2>&1; then
+        printf 'Codex: already authenticated; skipping login.\\n'
+        return 0
+    fi
+    command env PATH="$HOME/.local/bin:$PATH" \\
+        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty"
+}
+'''
+original = original.replace(previous_codex_helper, codex_helper, 1)
+if codex_helper not in original:
+    if 'auth_codex_openai' in original:
+        sys.exit('Existing Codex auth helper differs; cannot update automatically.')
+    original += '\n' + codex_helper
 previous_all = '''auth_all() {
     "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return
     auth_gh
 }
 '''
 desired_all = '''auth_all() {
+    case $#:${1-} in
+        0:|1:--force) ;;
+        *) printf 'Usage: auth_all [--force]\\n' >&2; return 2 ;;
+    esac
+    auth_opencode_openai "$@" || return
+    auth_codex_openai "$@" || return
+    auth_gh "$@"
+}
+'''
+original = original.replace(previous_all, desired_all, 1)
+previous_all = '''auth_all() {
+    auth_opencode_openai || return
+    auth_codex_openai || return
+    auth_gh
+}
+'''
+original = original.replace(previous_all, desired_all, 1)
+previous_all = '''auth_all() {
     auth_opencode_openai || return
     auth_gh
 }
 '''
 original = original.replace(previous_all, desired_all, 1)
+if '# SBX Deploy: authenticate all agents' in original and desired_all not in original:
+    sys.exit('Existing SBX auth_all helper was edited; cannot update automatically.')
 previous = '''# SBX Deploy: GitHub browser login
 login_gh() {
     unset GH_TOKEN GITHUB_TOKEN || return
     command gh auth login --hostname github.com --git-protocol https --web
 }
 '''
+previous_clipboard = '''# SBX Deploy: GitHub browser login
+auth_gh() {
+    unset GH_TOKEN GITHUB_TOKEN || return
+    # Scope the adapter and X11 backend selection to this gh process.
+    command env -u WAYLAND_DISPLAY \\
+        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\
+        gh auth login --hostname github.com --git-protocol https --web --clipboard
+}
+'''
+original = original.replace(previous_clipboard, desired, 1)
+original = original.replace(previous_clipboard.replace('auth_gh() {', 'login_gh() {'), desired, 1)
 if desired in original:
     updated = original
 elif desired.replace('auth_gh() {', 'login_gh() {') in original:
@@ -935,16 +1105,21 @@ staged.write_text(updated)
 SBX_GH_HELPER
 replace_system_file "$work_dir/gh-login.bashrc" "$global_bashrc"
 
-# Both commands run in this shell so auth_gh also clears inherited tokens here.
-# Stop if OpenAI login fails or is cancelled; leave individual helpers available.
+# Run helpers in sequence; auth_gh also clears inherited tokens in this shell.
+# Stop if either OpenAI login fails or is cancelled.
 if ! grep -Fxq -- '# SBX Deploy: authenticate all agents' "$global_bashrc"; then
     cat -- "$global_bashrc" > "$work_dir/auth-all.bashrc"
     cat >> "$work_dir/auth-all.bashrc" <<'SBX_AUTH_ALL'
 
 # SBX Deploy: authenticate all agents
 auth_all() {
-    auth_opencode_openai || return
-    auth_gh
+    case $#:${1-} in
+        0:|1:--force) ;;
+        *) printf 'Usage: auth_all [--force]\n' >&2; return 2 ;;
+    esac
+    auth_opencode_openai "$@" || return
+    auth_codex_openai "$@" || return
+    auth_gh "$@"
 }
 SBX_AUTH_ALL
     replace_system_file "$work_dir/auth-all.bashrc" "$global_bashrc"
@@ -1051,6 +1226,9 @@ else
     fi
 fi
 
+# Shared deployment defaults; each harness translates these to its own schema.
+main_model=gpt-6.1-sol
+subagent_model=gpt-6-luna
 stage_begin 'OpenCode models' 'Checking main and subagent models'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 [[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
@@ -1065,16 +1243,14 @@ if exists "$opencode_config"; then
 fi
 # Mask JSONC comments/trailing commas without shifting character offsets, then
 # replace only managed model settings. Other text, including comments, survives.
-python3 - "$opencode_config" "$work_dir/opencode-model.json" <<'SBX_OPENCODE_MODEL'
+python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
 import re
 import sys
 
-source, staged = map(Path, sys.argv[1:])
-# Current latest releases; explicit IDs keep reruns offline and reproducible.
-main_model = "openai/gpt-6.1-sol"
-subagent_model = "openai/gpt-6-luna"
+source, staged = map(Path, sys.argv[1:3])
+main_model, subagent_model = ('openai/' + model for model in sys.argv[3:5])
 desired = {
     "model": main_model,
     "agents": {
@@ -1175,6 +1351,64 @@ if [[ -f $work_dir/opencode-model.json ]]; then
 else
     stage_done unchanged 'Sol main and Luna subagent defaults match'
 fi
+stage_begin 'Codex models' 'Checking shared main and subagent defaults'
+codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
+[[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
+codex_config="$codex_config_dir/config.toml"
+if exists "$codex_config"; then
+    [[ -f $codex_config && -r $codex_config && ! -L $codex_config ]] ||
+        die "Codex configuration must be a readable regular file, not a symlink: $codex_config"
+fi
+# TOMLKit preserves comments and unrelated settings, including MCP servers.
+# Parse before publishing; matching settings leave the existing file untouched.
+python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" <<'SBX_CODEX_MODEL'
+from pathlib import Path
+import sys
+import tomlkit
+
+source, staged = map(Path, sys.argv[1:3])
+main_model, subagent_model = sys.argv[3:5]
+original = source.read_text(encoding='utf-8') if source.exists() else ''
+try:
+    config = tomlkit.parse(original)
+except tomlkit.exceptions.ParseError:
+    sys.exit(f'Cannot parse Codex configuration: {source}')
+if 'agents' not in config:
+    config['agents'] = tomlkit.table()
+agents = config['agents']
+if not isinstance(agents, (tomlkit.items.Table, tomlkit.items.InlineTable)):
+    sys.exit(f'Codex agents settings must contain a table: {source}')
+changed = False
+for table, key, value in (
+    (config, 'model', main_model),
+    (agents, 'enabled', True),
+    (agents, 'default_subagent_model', subagent_model),
+):
+    if table.get(key) != value:
+        table[key] = value
+        changed = True
+if changed or not source.exists():
+    staged.write_text(tomlkit.dumps(config), encoding='utf-8')
+SBX_CODEX_MODEL
+install_codex_model() (
+    local staged=
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    if exists "$codex_config"; then
+        replace_system_file "$work_dir/codex-model.toml" "$codex_config"
+    else
+        mkdir -p -- "$codex_config_dir"
+        staged=$(umask 077; mktemp -- "$codex_config.tmp.XXXXXX")
+        cat -- "$work_dir/codex-model.toml" > "$staged"
+        # Publish privately without overwriting a concurrently created config.
+        ln -T -- "$staged" "$codex_config"
+    fi
+)
+if [[ -f $work_dir/codex-model.toml ]]; then
+    install_codex_model
+    stage_done changed 'Main: GPT-6.1 Sol; subagents: GPT-6 Luna'
+else
+    stage_done unchanged 'Sol main and Luna subagent defaults match'
+fi
 )
 SBX_DEPLOY_PAYLOAD
 )
@@ -1194,7 +1428,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_gh\n\n'
+        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_codex_openai\n- auth_gh\n\nAdd --force to any auth command to repeat login.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
