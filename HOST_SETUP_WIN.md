@@ -153,7 +153,12 @@ file or edit configuration during deployment. Failures show the private log path
 
 If deployment identifies an edited helper, preserve a copy, then rename the
 helper so deployment can recreate it. Keep personal changes in a separate file.
-There is no force-overwrite flag.
+Helpers have no force-overwrite flag.
+
+For an unrecognized or edited `/etc/tmux.conf`, deployment stops and preserves
+the file. To back it up and restore the supplied configuration, run
+`bash ~/sbx_deploy.sh --tmux-redeploy` in sandbox Bash. Keep personal settings in
+`~/.tmux.conf`. The flag still rejects symlinks and concurrent edits.
 
 For edited, duplicate, or partial startup blocks, preserve the startup file and
 compare it with its backup. Restore a complete supported block, or remove only

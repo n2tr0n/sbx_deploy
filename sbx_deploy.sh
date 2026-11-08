@@ -9,7 +9,8 @@
 # 4. Install missing Codex with download, install, and version time limits.
 #    Download missing TPM/tmux-resurrect atomically.
 # 5. Start rsyslog and log rotation on Bash startup, including after restarts.
-# 6. Back up and update tmux configuration. Load plugins and check bindings.
+# 6. Install tmux configuration; upgrade only unchanged deployment files.
+#    Preserve edits unless --tmux-redeploy is set. Load plugins and check bindings.
 #    Add the bundled resurrect snapshot only without user saves. Restore it manually.
 # 7. Install UTF-8 tmux/btop wrappers, PATH entries, aliases, and login helpers.
 #    New user helpers belong to the caller, including in root-owned directories.
@@ -37,6 +38,7 @@
 (
 set -euo pipefail
 exec 6<&0
+sbx_script_args=("$@")
 # Record the invocation before a function or eval changes BASH_SOURCE.
 sbx_child_shell=false
 if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]]; then
@@ -44,6 +46,15 @@ if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]];
 fi
 sbx_save_and_run() {
     local payload target="$HOME/sbx_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
+    local tmux_redeploy=false option
+    if "$sbx_child_shell"; then
+        for option in "${sbx_script_args[@]}"; do
+            case $option in
+                --tmux-redeploy) tmux_redeploy=true ;;
+                *) printf 'Usage: bash ~/sbx_deploy.sh [--tmux-redeploy]\n' >&2; exit 2 ;;
+            esac
+        done
+    fi
     IFS= read -r -d '' payload || :
     command -v flock >/dev/null 2>&1 || {
         printf 'SBX Deploy: flock is required (install util-linux first).\n' >&2
@@ -96,7 +107,7 @@ sbx_save_and_run() {
 # Run desktop for boxed status, browser access and host reconnection commands.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
-        printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
+        printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
         printf '%s\n' 'sbx_child_shell=false' \
             'if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]]; then' \
             '    sbx_child_shell=true' 'fi'
@@ -772,9 +783,8 @@ fi
 if exists "$resurrect_dir"; then
     resurrect_ready || die "Existing tmux-resurrect path is unusable: $resurrect_dir"
 fi
-if exists "$conf" && [[ ! -f "$conf" ]]; then
-    die "Configuration does not point to a regular file: $conf"
-fi
+[[ -d /etc && ! -L /etc && ! -L $conf && ( ! -e $conf || -f $conf ) ]] ||
+    die "Unsafe tmux configuration path: $conf; preserve it and restore a regular file or leave it absent before retrying."
 stage_done verified 'Paths validated'
 
 # Check local dpkg state before network access.
@@ -1015,13 +1025,18 @@ replace_system_file() (
     touch -- "$work_dir/changed"
 )
 
-# Determine ownership from content for all generated helpers.
+# Determine ownership from content for generated helpers and tmux configuration.
 # Record private baselines only after successful file publication.
 managed_conflict() {
+    if [[ $1 == /etc/tmux.conf ]]; then
+        die "Unrecognized or edited tmux configuration: $1. File preserved. Review it, then run bash ~/sbx_deploy.sh --tmux-redeploy to back it up and restore the supplied configuration."
+    fi
     die "Managed file differs: $1. Preserve/rename it, or restore the baseline in $log_dir/managed after reviewing your edits, then rerun. No force overwrite is available."
 }
 legacy_managed_digest() {
     case "$1:$2" in
+        # Supplied tmux.conf in 4944f0d through 59c9042. Keep shipped digests for upgrades.
+        tmux.conf:766687fbd89ed67c0a60d8cc63651a5ebdb56876a2caffbab271a098101b8f6f) return 0 ;;
         tmux:4e5cdc439742a730df166fd7d41c858a8b3cb9f6a15f2ac6de7222851a5c0b7a) return 0 ;;
         btop:a1ff64e6c696f59d1e01c71287229fdb297aadfba7e0bea1ba7ef998f88a15f3) return 0 ;;
         sbx_check_credentials:333d4ece17931876ed9897cd1dfac2e7369e85274a1595855c22767d47b407f0) return 0 ;;
@@ -1051,6 +1066,7 @@ managed_preflight() {
             die "Managed helper is not executable: $target; review its permissions and restore execute permission, then retry."
         fi
         if run_as_root cmp -s -- "$target" "$desired"; then return 0; fi
+        if [[ ${4:-} == --tmux-redeploy ]]; then return 0; fi
         if [[ -f $baseline ]] && run_as_root cmp -s -- "$target" "$baseline"; then return 0; fi
         [[ ! -f $baseline ]] || managed_conflict "$target"
         digest=$(run_as_root sha256sum -- "$target"); digest=${digest%% *}
@@ -1063,7 +1079,13 @@ install_managed_file() (
     local input_dir
     input_dir=$(mktemp -d -- "$work_dir/managed-input.XXXXXX")
     snapshot_file "$target" "$input_dir/input" "$input_dir/exists"
-    managed_preflight "$target" "$desired" "$mode"
+    managed_preflight "$target" "$desired" "$mode" "${4:-}"
+    # tmux can already match without a baseline. Do not write state on that path.
+    if [[ ${4:-} == --skip-matching || ${4:-} == --tmux-redeploy ]] && cmp -s -- "$input_dir/input" "$desired" &&
+       [[ $(< "$input_dir/exists") == True ]]; then
+        assert_input "$target" "$input_dir/input" "$input_dir/exists"
+        return 0
+    fi
     # Create user helper directories without sudo if the nearest existing ancestor is writable.
     # Use elevated staging for older root-owned directories.
     local parent=${target%/*} ancestor=${target%/*}
@@ -1218,7 +1240,12 @@ set -g @plugin 'tmux-plugins/tmux-resurrect'
 # This line must be at the very bottom of /etc/tmux.conf:
 run-shell -b 'if [ -x "$HOME/.tmux/plugins/tpm/tpm" ] && [ -x "$HOME/.tmux/plugins/tmux-resurrect/resurrect.tmux" ]; then "$HOME/.tmux/plugins/tpm/tpm"; fi'
 TMUX_CONF
-replace_system_file "$new_conf" "$conf" 644
+# Preserve changed user settings by default. To back them up and restore these
+# defaults explicitly, run: bash ~/sbx_deploy.sh --tmux-redeploy
+# The flag does not bypass path safety or concurrent-edit checks.
+tmux_option=--skip-matching
+if "$tmux_redeploy"; then tmux_option=--tmux-redeploy; fi
+install_managed_file "$conf" "$new_conf" 644 "$tmux_option"
 if [[ -e $work_dir/changed ]]; then
     if [[ -e $work_dir/backup ]]; then
         stage_done changed 'Updated; backup saved'
