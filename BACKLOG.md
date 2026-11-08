@@ -11,24 +11,6 @@ are unverified. Record reproduction evidence. Update or close each entry after i
 - [AI-reported; unverified] OpenCode V2 MCP layout: the installer writes `mcp.mcp-gateway` with `enabled`, while V2 documents `mcp.servers.mcp-gateway` with `disabled`. The reviewed schema still accepts the legacy layout; no connection failure is confirmed. Check the installed version and legacy support. Test gateway discovery and a Context7 tool before changing the layout. Preserve user MCP settings during migration.
 - [Unreproduced] Codex "broken pipe" during selection or copying: investigate if it recurs. Record reproduction steps, versions, and relevant output.
 
-# Resolved issues
-
-- [Confirmed by code review; fixed] tmux configuration overwrite: the tmux stage
-  bypassed ownership checks. It now preserves unknown or edited settings and
-  stops with instructions. Matching files need no writes or new backups. Only
-  recognized, unchanged deployment files can upgrade by default.
-  `--tmux-redeploy` explicitly backs up and restores the supplied configuration.
-  Path safety, concurrent-edit checks, and interruption recovery remain in use.
-  Local syntax checks and 20 isolated helper/option cases passed.
-  Disposable-sandbox tests are pending.
-
-# Documented host requirements
-
-Keep setup and troubleshooting details in [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md).
-
-- On the documented Windows setup, GitHub credentials may require a host `sbx daemon restart` after sandbox creation.
-- Each new sandbox requires host setup to attach the MCP gateway. The installer cannot attach it.
-
-# Roadmap features
+# Future roadmap features
 
 - vscode headless + tunnel enabled

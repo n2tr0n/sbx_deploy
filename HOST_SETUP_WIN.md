@@ -42,14 +42,7 @@ bindings:
         - raw.githubusercontent.com
 ```
 
-These settings survive sandbox recreation. Run the current installer in sandbox
-Bash. It imports masked OpenCode OAuth and configures Codex routing.
-Host credentials require no sandbox login.
-
-Optional sandbox login: run `auth_all`, or use `auth_opencode_openai`,
-`auth_codex_openai`, or `auth_gh`. Add `--force` to repeat a login.
-Local credentials stay in the sandbox; host proxy substitution remains active.
-Rerun the installer to restore deployment defaults for OpenCode and Codex.
+These settings survive sandbox recreation.
 
 ## Context7 MCP gateway
 
@@ -72,10 +65,6 @@ during sandbox creation. Registration and OAuth stay on the host. No API key or
 `credentials.yaml` binding is required. Docker Desktop MCP Toolkit registrations
 are separate from `sbx mcp`.
 
-The installer configures the gateway in OpenCode and Codex. Restart the harnesses
-after setup. Context7 tools appear under the gateway, sometimes through
-`mcp-exec` or `code-mode`. Do not log in to Context7 separately in Codex.
-
 [Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/),
 [Context7 OAuth guide](https://context7.com/docs/howto/oauth)
 
@@ -93,7 +82,6 @@ Without `--sandbox`, this sets a global default for existing and future sandboxe
 An explicit deny takes precedence. If the pull fails, also check access to
 `ghcr.io:443` and `pkg-containers.githubusercontent.com:443`.
 A registry `403 Forbidden` can indicate a proxy policy block.
-After permitting access, rerun the installer and choose Webtop.
 
 After deployment, check the host port mapping:
 
@@ -109,12 +97,6 @@ If host port 3001 is in use, publish another port, such as
 `127.0.0.1:3002:3001`, and use it in the URL.
 Keep the binding on loopback. Webtop has no login by default.
 
-Run sandbox `desktop` for status and reconnection commands. Confirm its suggested
-sandbox name with host `sbx ls`, or run `desktop <sandbox-name>`.
-Desktop storage survives container removal. Deleting the sandbox deletes it.
-
-[Webtop documentation](https://docs.linuxserver.io/images/docker-webtop/)
-
 ## Troubleshooting
 
 Confirm the target with **host PowerShell** `sbx ls`.
@@ -127,14 +109,6 @@ Confirm the target with **host PowerShell** `sbx ls`.
   `sbx secret set github --command 'gh auth token --hostname github.com' --force`.
 - OpenAI: check for `(oauth configured)` in host `sbx secret ls`.
   Renew with `sbx secret set openai --oauth` if required.
-  Missing `api.responses.write` can indicate incorrect OpenCode routing.
-  Rerun the current installer before changing account permissions.
-- In **sandbox Bash**, run `check_credentials` for live access and credential
-  sources. It cannot prove which token the host proxy sent.
-  Repeat cached installer checks with `SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh`.
-  OpenAI checks cover model-list access only. Test a prompt in each harness.
-- Run sandbox `check_mcp` for gateway discovery. It does not verify upstream
-  OAuth or host attachment. Test a Context7 tool in each harness.
 - For persistent failures, run host `sbx daemon status` to find the log path.
   Set `sbx daemon log-level set proxy debug`, reproduce one failure, then restore
   `sbx daemon log-level set proxy info`. Check entries for the target host.
@@ -144,23 +118,4 @@ Confirm the target with **host PowerShell** `sbx ls`.
 Avoid `sbx reset`: it deletes sandbox state and stored secrets.
 
 [Docker credential reference](https://docs.docker.com/ai/sandboxes/configuration/credentials/)
-
-## Installer recovery
-
-Run the installer in sandbox Bash. After an interruption, rerun it.
-If another deployment is active, wait for it to finish. Do not delete its lock
-file or edit configuration during deployment. Failures show the private log path.
-
-If deployment identifies an edited helper, preserve a copy, then rename the
-helper so deployment can recreate it. Keep personal changes in a separate file.
-Helpers have no force-overwrite flag.
-
-For an unrecognized or edited `/etc/tmux.conf`, deployment stops and preserves
-the file. To back it up and restore the supplied configuration, run
-`bash ~/sbx_deploy.sh --tmux-redeploy` in sandbox Bash. Keep personal settings in
-`~/.tmux.conf`. The flag still rejects symlinks and concurrent edits.
-
-For edited, duplicate, or partial startup blocks, preserve the startup file and
-compare it with its backup. Restore a complete supported block, or remove only
-the conflicting managed block before retrying. Keep unrelated settings.
 
