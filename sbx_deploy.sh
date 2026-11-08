@@ -26,9 +26,9 @@
 #    Consolidate detected issues and relevant host recovery actions at the end.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
-# 13. Ask on every run whether to deploy/start optional Ubuntu XFCE Webtop;
-#     reuse its container/config volume and show its URL and host port command.
-#     Install desktop to recall status, URL and reconnection commands anytime.
+# 13. Ask to deploy optional Ubuntu XFCE Webtop only if its container is absent;
+#     preserve existing running/stopped desktops; show URL and host port command.
+#     Install desktop with boxed status, URL and host reconnection commands.
 # 14. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Box the result/actions; show checks, desktop access, reload help and log path.
 #    Print host daemon restart and named Context7 attachment commands.
@@ -73,8 +73,8 @@ sbx_save_and_run() {
 # Confirm the hostname after the banner; default No, require terminal input.
 # Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
-# Ask each run about optional Webtop; preserve desktop data and show access details.
-# Run desktop anytime for desktop status and host reconnection instructions.
+# Ask about Webtop only without its container; preserve existing desktop state/data.
+# Run desktop for boxed status, browser access and host reconnection commands.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -211,7 +211,7 @@ done <<'SBX_BANNER'
   /  \   \____  \ /  /_/  <  \  V  /       .:: S B X   D E P L O Y ::. /  \
   \  /  —————/  //  /_/   /  /  \  \                                   \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX v-0.1a              __/  /\
+   /\  \__  Nitron's Deployment Script for SBX v0.1a               __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
 
@@ -346,7 +346,7 @@ summary_text() {
         if "$box_open" && (( ${#text} <= width )); then
             printf -v padding '%*s' "$((width - ${#text}))" ''
             printf '%s%s%s %s%s%s%s %s%s%s\n' "$muted" "$box_vertical" "$reset" "$color" "$text" "$reset" "$padding" "$muted" "$box_vertical" "$reset" >&3
-            printf '%s\n' "$text" >> "$log_file"
+            if [[ -n ${log_file-} ]]; then printf '%s\n' "$text" >> "$log_file"; fi
         else
             report_line "  $text" "$color"
         fi
@@ -599,19 +599,25 @@ finish_installer() {
             desktop_color=$green
             [[ $webtop_status != stopped ]] || desktop_color=$amber
             summary_begin "WEBTOP - $webtop_status" "$desktop_color"
-            summary_text 'https://127.0.0.1:3001/' '' literal
-            summary_text 'Accept the self-signed certificate. Use your mapped host port if different.' "$muted"
+            summary_text ''
+            summary_text 'Open in your browser:'
+            summary_command 'https://127.0.0.1:3001/'
+            summary_text 'Accept the self-signed certificate.' "$muted"
+            summary_text 'Use your mapped host port if different.' "$muted"
             if [[ $webtop_status == stopped ]]; then
-                summary_text 'Sandbox Bash: start the desktop when needed.'
-                summary_text 'docker start webtop' '' literal
+                summary_text ''
+                summary_text 'Sandbox Bash - start the desktop:'
+                summary_command 'docker start webtop'
             fi
-            summary_text 'Windows PowerShell: confirm the sandbox name and check its ports.'
+            summary_text ''
+            summary_text 'Windows PowerShell - check sandbox and ports:'
             summary_command 'sbx ls'
             if [[ $host_sandbox_arg == '$sandboxName' ]]; then
-                summary_text '$sandboxName = Read-Host "Sandbox name"' '' literal
+                summary_command '$sandboxName = Read-Host "Sandbox name"'
             fi
             summary_command "sbx ports $host_sandbox_arg"
-            summary_text 'Only if the mapping is absent:' "$muted"
+            summary_text ''
+            summary_text 'Publish only if the mapping is absent:'
             summary_command "sbx ports $host_sandbox_arg --publish 127.0.0.1:3001:3001"
             summary_text ''
             summary_end
@@ -1600,40 +1606,128 @@ replace_system_file "$work_dir/sbx_check_mcp" "$HOME/.local/bin/sbx_check_mcp" 7
 desktop_contents() {
     cat <<'SBX_DESKTOP'
 #!/usr/bin/env bash
+# Display local desktop status and reconnection commands; no settings changed.
 set -euo pipefail
 if (( $# > 1 )); then
     printf 'Usage: desktop [sandbox-name]\n' >&2
     exit 2
 fi
+exec 3>&1
+log_file=
+green= amber= muted= reset=
+utf8=false
+locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
+if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then utf8=true; fi
+if [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR+x} ]]; then
+    green=$'\033[32m' amber=$'\033[33m' muted=$'\033[90m' reset=$'\033[0m'
+fi
+# Use the installer's summary layout without writing to an installer log.
+report_line() { printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3; }
+SBX_DESKTOP
+    # Share wrapping, boxes, command bullets and narrow-terminal fallbacks.
+    cat <<'SBX_DESKTOP'
+summary_width=${COLUMNS:-}
+if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
+    summary_width=$(tput cols 2>/dev/null) || summary_width=80
+fi
+[[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
+summary_width=$((10#$summary_width))
+(( summary_width > 0 )) || summary_width=80
+(( summary_width <= 80 )) || summary_width=80
+box_open=false
+box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
+command_bullet='-'
+if "$utf8"; then
+    box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
+    command_bullet='•'
+fi
+SBX_DESKTOP
+    declare -f box_rule summary_begin summary_end summary_text summary_command
+    cat <<'SBX_DESKTOP'
 sandbox_name=${1:-${HOSTNAME:-}}
 if [[ ! $sandbox_name =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
-    sandbox_name='<sandbox-name>'
+    sandbox_name='$sandboxName'
 fi
-printf '\nWebtop desktop: https://127.0.0.1:3001/\n'
+container_state= image= status_color=$amber
 if ! command -v docker >/dev/null 2>&1; then
-    printf 'Status: Docker is not installed in this sandbox.\n'
+    status='Docker is not installed in this sandbox.'
 elif ! docker info >/dev/null 2>&1; then
-    printf 'Status: Docker is unavailable; check docker info for details.\n'
+    status='Docker is unavailable; run docker info for details.'
 else
     container_id=$(docker container ls -a --filter 'name=^/webtop$' --format '{{.ID}}')
     if [[ -n $container_id ]]; then
-        docker inspect --format 'Status: {{.State.Status}} ({{.Config.Image}})' "$container_id"
-        printf 'If stopped, start inside this sandbox: docker start webtop\n'
+        container_state=$(docker inspect --format '{{.State.Status}}' "$container_id")
+        image=$(docker inspect --format '{{.Config.Image}}' "$container_id")
+        status=$container_state
+        if [[ $container_state == running ]]; then status_color=$green; fi
     else
-        printf 'Status: Webtop is not deployed. Rerun bash ~/sbx_deploy.sh and choose Yes.\n'
+        status='Not deployed'
     fi
 fi
-printf '\nRun these on your Windows HOST in PowerShell:\n  sbx ls\n'
-printf '  sbx exec -it %s bash\n' "$sandbox_name"
-printf '  sbx ports %s\n' "$sandbox_name"
-printf 'If port 3001 is not already mapped:\n  sbx ports %s --publish 127.0.0.1:3001:3001\n' "$sandbox_name"
-printf '\nThe name above defaults to this sandbox hostname; confirm it with host sbx ls.\n'
-printf 'Use desktop SANDBOX-NAME to print commands for a different name.\n'
-printf 'Port bindings normally survive disconnection. If using another host port,\nuse that port in the URL. Accept Webtop\047s self-signed HTTPS certificate.\n'
-printf 'After reconnecting, run tmux attach to resume an existing tmux session.\n\n'
+summary_begin 'WEBTOP DESKTOP' "$status_color"
+summary_text ''
+summary_text "Status: $status" "$status_color"
+if [[ -n $image ]]; then summary_text "Image: $image" "$muted"; fi
+summary_text ''
+summary_text 'Open in your browser:'
+summary_command 'https://127.0.0.1:3001/'
+summary_text 'Accept the self-signed certificate.' "$muted"
+summary_text 'Use your mapped host port if different.' "$muted"
+if [[ $container_state == exited || $container_state == created ]]; then
+    summary_text ''
+    summary_text 'Sandbox Bash - start the desktop:'
+    summary_command 'docker start webtop'
+elif [[ $status == 'Not deployed' ]]; then
+    summary_text ''
+    summary_text 'Sandbox Bash - deploy the desktop (choose Yes):'
+    summary_command 'bash ~/sbx_deploy.sh'
+fi
+summary_text ''
+summary_end
+summary_begin 'WINDOWS POWERSHELL - CONNECT' "$green"
+summary_text ''
+summary_text 'Confirm the sandbox name:'
+summary_command 'sbx ls'
+if [[ $sandbox_name == '$sandboxName' ]]; then
+    summary_command '$sandboxName = Read-Host "Sandbox name"'
+fi
+summary_text ''
+summary_text 'Reconnect to the sandbox:'
+summary_command "sbx exec -it $sandbox_name bash"
+summary_text ''
+summary_text 'Check published ports:'
+summary_command "sbx ports $sandbox_name"
+summary_text ''
+summary_text 'Publish only if the mapping is absent:'
+summary_command "sbx ports $sandbox_name --publish 127.0.0.1:3001:3001"
+summary_text ''
+summary_text 'Port bindings normally survive disconnection.' "$muted"
+summary_text ''
+summary_end
+summary_begin 'SANDBOX BASH - RESUME' "$green"
+summary_text ''
+summary_command 'tmux attach' 'Resume an existing tmux session after reconnecting'
+summary_text ''
+summary_text 'The suggested sandbox name defaults to this sandbox hostname.' "$muted"
+summary_text 'For another name, run: desktop SANDBOX-NAME' "$muted"
+summary_text ''
+summary_end
+report_line ''
 SBX_DESKTOP
 }
-ensure_wrapper "$HOME/.local/bin/desktop" desktop_contents
+desktop_contents > "$work_dir/desktop"
+if exists "$HOME/.local/bin/desktop"; then
+    # Migrate only the exact original helper or our current generated output.
+    # Preserve user edits; the shared replacement helper backs up changes once.
+    if ! cmp -s -- "$HOME/.local/bin/desktop" "$work_dir/desktop"; then
+        desktop_digest=$(sha256sum -- "$HOME/.local/bin/desktop")
+        [[ ${desktop_digest%% *} == ada75803a1f16eb59055b164a2c67950804d0443a6ad9b0783e117c343b0286c ]] ||
+            die 'Existing desktop helper differs; preserve or rename it before retrying.'
+    fi
+    replace_system_file "$work_dir/desktop" "$HOME/.local/bin/desktop" 755
+else
+    ensure_wrapper "$HOME/.local/bin/desktop" desktop_contents
+fi
 
 # Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
 gh_clipboard_contents() {
@@ -2643,52 +2737,16 @@ check_credential github 'GitHub auth'
 check_credential openai 'OpenAI auth'
 
 stage_begin 'Webtop' 'Checking optional desktop'
-# Descriptor 6 holds the caller's stdin, not the literal installer heredoc.
-# A pasted run must never read its payload (or later shell commands) as answers.
-stop_spinner
-drain_output
 webtop_choice=n
-prompt_fd=
-if [[ -t 6 ]]; then
-    prompt_fd=6
-elif { exec 7</dev/tty; } 2>/dev/null; then
-    prompt_fd=7
-fi
-if [[ -n $prompt_fd ]]; then
-    while :; do
-        printf '\nDeploy/start Webtop desktop? [y/N] (No keeps any existing desktop): ' >&3
-        if ! IFS= read -r -u "$prompt_fd" webtop_choice; then
-            webtop_choice=n
-            printf '\n' >&3
-            break
-        fi
-        case ${webtop_choice,,} in
-            y|yes) webtop_choice=y; break ;;
-            n|no|'') webtop_choice=n; break ;;
-            *) printf 'Please enter y or n.\n' >&3 ;;
-        esac
-    done
-    [[ $prompt_fd != 7 ]] || exec 7<&-
-else
-    printf '\nNo terminal input; optional Webtop deployment skipped.\n' >&3
-fi
-printf 'Webtop deployment requested: %s\n' "$webtop_choice" >> "$log_file"
-capture_output
-start_spinner
 webtop_image=lscr.io/linuxserver/webtop:ubuntu-xfce
 webtop_id=
+webtop_docker_available=false
 if command -v docker >/dev/null 2>&1; then
-    # Do not install/reconfigure Docker or start a daemon for a declined option.
+    # Read local state before prompting; never start/reconfigure Docker here.
     if docker info >/dev/null 2> "$work_dir/webtop-docker.stderr"; then
+        webtop_docker_available=true
         webtop_id=$(docker container ls -a --filter 'name=^/webtop$' --format '{{.ID}}')
-    elif [[ $webtop_choice == y ]]; then
-        cat -- "$work_dir/webtop-docker.stderr" >&2
-        die 'Webtop needs access to the sandbox Docker Engine; repair Docker and rerun.'
-    else
-        warn 'Docker unavailable; existing Webtop status could not be checked.'
     fi
-elif [[ $webtop_choice == y ]]; then
-    die 'Webtop needs Docker inside the sandbox; use an SBX image with Docker and rerun.'
 fi
 if [[ -n $webtop_id ]]; then
     docker inspect "$webtop_id" > "$work_dir/webtop-container.json"
@@ -2717,25 +2775,62 @@ print('running' if state['Running'] else 'stopped')
 SBX_WEBTOP_INSPECT
     )
 fi
-if [[ $webtop_choice == y ]]; then
-    if [[ -z $webtop_id ]]; then
-        stage_operation 'Creating Ubuntu XFCE desktop (first download may take time)'
-        # Docker reuses a local image; never pull/update it on an identical rerun.
-        # A failed start leaves a named container that the next run can retry.
-        docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
-            -p 3001:3001 -v webtop-config:/config "$webtop_image"
-        webtop_status=running
-        stage_done changed 'Deployed Ubuntu XFCE desktop'
-    elif [[ $webtop_status == stopped ]]; then
-        stage_operation 'Starting existing Webtop desktop'
-        docker start "$webtop_id"
-        webtop_status=running
-        stage_done changed 'Started existing desktop; data preserved'
-    else
-        stage_done unchanged 'Desktop already running'
+if [[ -z $webtop_id ]]; then
+    # Descriptor 6 holds the caller's stdin, not the literal installer heredoc.
+    # A pasted run must never read its payload (or later shell commands) as answers.
+    stop_spinner
+    drain_output
+    prompt_fd=
+    if [[ -t 6 ]]; then
+        prompt_fd=6
+    elif { exec 7</dev/tty; } 2>/dev/null; then
+        prompt_fd=7
     fi
+    if [[ -n $prompt_fd ]]; then
+        while :; do
+            printf '\nDeploy Webtop desktop? [y/N]: ' >&3
+            if ! IFS= read -r -u "$prompt_fd" webtop_choice; then
+                webtop_choice=n
+                printf '\n' >&3
+                break
+            fi
+            case ${webtop_choice,,} in
+                y|yes) webtop_choice=y; break ;;
+                n|no|'') webtop_choice=n; break ;;
+                *) printf 'Please enter y or n.\n' >&3 ;;
+            esac
+        done
+        [[ $prompt_fd != 7 ]] || exec 7<&-
+    else
+        printf '\nNo terminal input; optional Webtop deployment skipped.\n' >&3
+    fi
+    capture_output
+    start_spinner
+fi
+printf 'Webtop deployment requested: %s\n' "$webtop_choice" >> "$log_file"
+if [[ $webtop_docker_available != true ]]; then
+    if [[ $webtop_choice == y ]]; then
+        if command -v docker >/dev/null 2>&1; then
+            cat -- "$work_dir/webtop-docker.stderr" >&2
+            die 'Webtop needs access to the sandbox Docker Engine; repair Docker and rerun.'
+        fi
+        die 'Webtop needs Docker inside the sandbox; use an SBX image with Docker and rerun.'
+    elif command -v docker >/dev/null 2>&1; then
+        warn 'Docker unavailable; existing Webtop status could not be checked.'
+    fi
+fi
+if [[ $webtop_choice == y ]]; then
+    stage_operation 'Creating Ubuntu XFCE desktop (first download may take time)'
+    # Docker reuses a local image; never pull/update it on an identical rerun.
+    # If a failed start leaves a matching container, use docker start webtop.
+    docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
+        -p 3001:3001 -v webtop-config:/config "$webtop_image"
+    webtop_status=running
+    stage_done changed 'Deployed Ubuntu XFCE desktop'
+elif [[ -n $webtop_id ]]; then
+    stage_done unchanged "Existing desktop $webtop_status; prompt skipped"
 else
-    stage_done unchanged 'Deployment declined; existing desktop preserved'
+    stage_done unchanged 'Optional desktop skipped'
 fi
 )
 SBX_DEPLOY_PAYLOAD

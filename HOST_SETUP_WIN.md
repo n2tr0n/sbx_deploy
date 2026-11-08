@@ -118,13 +118,7 @@ the pull still fails. A `403 Forbidden` while resolving `lscr.io` can be the SBX
 proxy rejecting an unlisted registry. Rerun the installer after allowing it;
 the sandbox installer cannot edit host policy.
 
-The installer asks on every run whether to deploy/start Ubuntu XFCE Webtop.
-Answering No leaves an existing desktop intact. Without terminal input it skips
-deployment. Docker must already be available inside the sandbox; the installer
-does not install Docker or change its permissions. A running matching container
-is reused without pulling an image or rewriting configuration. A stopped one is
-started only when you answer Yes. Existing conflicting containers are preserved
-and reported rather than replaced. Interrupted downloads/starts can be retried.
+Rerunning the installer preserves an existing desktop.
 
 After deployment, check the mapping in **host PowerShell**:
 
@@ -136,9 +130,8 @@ sbx ports <sandbox-name> --publish 127.0.0.1:3001:3001
 ```
 
 Open **https://127.0.0.1:3001/** and accept the self-signed certificate. The
-installer prints this URL for an existing matching desktop even if deployment
-was declined; a stopped desktop is identified as stopped. It cannot verify host
-port mappings. If host port 3001 is already used by another sandbox, publish a
+installer cannot verify host port mappings. If host port 3001 is already used
+by another sandbox, publish a
 different host port (for example `127.0.0.1:3002:3001`) and use that port in the
 URL instead. Keep the host binding on loopback: Webtop has no login by default.
 
