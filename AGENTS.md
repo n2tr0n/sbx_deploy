@@ -14,7 +14,8 @@
 
 # Roadmap features
 
-- annoying gh restart
+- gh daemon restart; bug - sbx daemon must restart to enable gh cred passthrough on new win sandbox
+- broken pipe on codex select/copy
 - xwin startup question should skip on re-run if it's already deployed
-- tighten; clear the vibe coded slop
+- tighten; clear the vibe coded slop; review claude comments
 - release/public

@@ -21,6 +21,7 @@
 # 11. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
 #     Connect both harnesses to the sandbox's host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
+#    Install check_credentials for live credential checks and per-harness source modes.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
 # 13. Ask on every run whether to deploy/start optional Ubuntu XFCE Webtop;
@@ -63,6 +64,7 @@ sbx_save_and_run() {
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
+# Run check_credentials for live credential checks and passthrough/local source modes.
 # Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask each run about optional Webtop; preserve desktop data and show access details.
@@ -95,7 +97,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive credential checks and source modes:\n  check_credentials\nGitHub passthrough on this Windows v0.51.0 setup typically needs a HOST sbx daemon restart after sandbox creation.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -987,6 +989,195 @@ ensure_wrapper() (
 ensure_wrapper "$tmux_wrapper" wrapper_contents
 ensure_wrapper "$HOME/.local/bin/btop" btop_wrapper_contents
 
+credential_check_contents() {
+    cat <<'SBX_CREDENTIAL_CHECK'
+#!/usr/bin/env python3
+"""Read-only live credential checks; never print tokens or command diagnostics."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import textwrap
+
+if len(sys.argv) != 1:
+    sys.exit('Usage: check_credentials')
+
+home = Path.home()
+failed = False
+modes = []
+passed = 0
+actions = []
+width = max(36, min(88, shutil.get_terminal_size((80, 24)).columns - 2))
+color = sys.stdout.isatty() and os.environ.get('TERM', 'dumb') != 'dumb' and 'NO_COLOR' not in os.environ
+palette = {'green': '\033[32m', 'amber': '\033[33m', 'dim': '\033[2m', 'bold': '\033[1m'}
+
+def paint(text, style):
+    return palette[style] + text + '\033[0m' if color else text
+
+def note(text, style='dim'):
+    for line in textwrap.wrap(text, width=width - 2):
+        print('  ' + paint(line, style))
+
+sentinel = 'oai-oat01-proxy-managed'
+base = 'https://chatgpt.com/backend-api/codex'
+
+def run(args, payload=None):
+    # Capture all output in memory; stderr can contain credentials.
+    return subprocess.run(args, input=payload, text=True, capture_output=True,
+                          timeout=30, env={**os.environ, 'GH_DEBUG': '',
+                          'GH_PROMPT_DISABLED': '1', 'GH_NO_UPDATE_NOTIFIER': '1'})
+
+def report(name, mode, ok, detail):
+    global failed, passed
+    modes.append(mode)
+    failed |= not ok
+    passed += int(ok)
+    source = {'passthrough': 'Host proxy', 'local login': 'Local login',
+              'environment token (unknown)': 'Env token',
+              'API key (local/env)': 'API key', 'unknown / missing': 'Missing'}.get(mode, 'Unknown')
+    status = paint(f'{"PASS" if ok else "CHECK":5}', 'green' if ok else 'amber')
+    row = f'  {name:10} {status}  {source:12}'
+    if width >= 66:
+        if ok:
+            row += '  ' + ('Account access' if name == 'GitHub' else 'Model access')
+        print(row)
+    else:
+        print(f'  {name:10} {status}  {source}')
+    if not ok:
+        note(detail, 'amber')
+    sys.stdout.flush()
+
+def read_json(path):
+    return json.loads(path.read_text()) if path.exists() else {}
+
+def probe(token, url, version=None, account=None):
+    if not isinstance(token, str) or not token or any(c in token for c in '\r\n'):
+        return False, 'missing or unsupported token'
+    headers = f'Authorization: Bearer {token}\n'
+    if account:
+        if not isinstance(account, str) or any(c in account for c in '\r\n'):
+            return False, 'unsupported account ID'
+        headers += f'ChatGPT-Account-Id: {account}\n'
+    if version:
+        url += '?client_version=' + version
+    result = run(['curl', '--disable', '--silent', '--connect-timeout', '10',
+                  '--max-time', '25', '--output', '/dev/null', '--write-out',
+                  '%{http_code}', '--header', '@-', url], headers)
+    code = result.stdout.strip()
+    return result.returncode == 0 and code == '200', (
+        f'HTTP {code}' if re.fullmatch(r'\d{3}', code) else 'request failed')
+
+def check_github():
+    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    if token:
+        mode = 'passthrough' if 'proxy-managed' in token else 'environment token (unknown)'
+    else:
+        saved = run(['gh', 'auth', 'token', '--hostname', 'github.com'])
+        token = saved.stdout.strip() if saved.returncode == 0 else ''
+        mode = ('passthrough' if 'proxy-managed' in token else
+                'local login' if token else 'unknown / missing')
+    result = run(['gh', 'api', '--hostname', 'github.com', 'user', '--jq', '.login'])
+    ok = result.returncode == 0 and bool(re.fullmatch(r'[A-Za-z0-9-]+', result.stdout.strip()))
+    code = re.search(r'HTTP (\d{3})', result.stderr)
+    report('GitHub', mode, ok, 'account request accepted' if ok else
+           f'HTTP {code[1]}' if code else 'account request failed')
+    if not ok and code and code[1] == '401':
+        actions.append('GitHub 401: if host gh works, run sbx daemon restart in host PowerShell, then retry.')
+
+def check_codex():
+    import tomlkit
+    directory = Path(os.environ.get('CODEX_HOME', str(home / '.codex')))
+    path = directory / 'config.toml'
+    config = tomlkit.parse(path.read_text()) if path.exists() else {}
+    provider = config.get('model_provider', 'openai')
+    version_result = run(['codex', '--version'])
+    match = re.search(r'\b(\d+\.\d+\.\d+)\b', version_result.stdout)
+    if not match:
+        report('Codex', 'unknown', False, 'cannot determine CLI version')
+        return
+    if provider == 'sbx-chatgpt':
+        record = config.get('model_providers', {}).get(provider, {})
+        if record.get('experimental_bearer_token') != sentinel or record.get('base_url') != base:
+            report('Codex', 'unknown', False, 'managed provider differs')
+            return
+        mode, token, url, account = 'passthrough', sentinel, base + '/models', None
+    elif provider == 'openai':
+        auth = read_json(directory / 'auth.json')
+        tokens = auth.get('tokens') or {}
+        token = os.environ.get('OPENAI_API_KEY') or auth.get('OPENAI_API_KEY')
+        account = None
+        if token:
+            mode, url = 'API key (local/env)', 'https://api.openai.com/v1/models'
+        else:
+            mode, token, url = 'local login', tokens.get('access_token'), base + '/models'
+            account = tokens.get('account_id')
+    else:
+        report('Codex', 'unknown', False, 'custom provider; check in harness')
+        return
+    ok, detail = probe(token, url, match[1] if url.startswith(base) else None, account)
+    report('Codex', mode, ok, detail)
+
+def check_opencode():
+    binary = shutil.which('opencode') or str(home / '.opencode/bin/opencode')
+    result = run([binary, 'auth', 'export', '--standalone'])
+    if result.returncode:
+        report('OpenCode', 'unknown', False, 'credential inventory unavailable')
+        return
+    records = json.loads(result.stdout)
+    active = [r for r in records if r.get('integrationID') == 'openai' and r.get('active') is True]
+    if len(active) != 1:
+        report('OpenCode', 'unknown', False, 'expected one active OpenAI credential')
+        return
+    value = active[0]['value']
+    token = value.get('access') if value.get('type') == 'oauth' else value.get('key')
+    mode = 'passthrough' if token == sentinel else 'local login'
+    if value.get('type') == 'oauth':
+        result = run(['codex', '--version'])
+        version = re.search(r'\b(\d+\.\d+\.\d+)\b', result.stdout)
+        if not version:
+            report('OpenCode', mode, False, 'cannot determine model probe version')
+            return
+        ok, detail = probe(token, base + '/models', version[1])
+    else:
+        ok, detail = probe(token, 'https://api.openai.com/v1/models')
+    report('OpenCode', mode, ok, detail)
+
+print('\n  ' + paint('CREDENTIAL CHECK', 'bold'))
+note('Live access and selected credential sources. No settings changed.')
+print('  ' + paint('-' * (width - 2), 'dim'))
+if width >= 66:
+    print('  ' + paint(f'{"SERVICE":10} {"STATE":5}  {"SOURCE":12}  ACCESS', 'dim'))
+for name, check in [('GitHub', check_github), ('OpenCode', check_opencode), ('Codex', check_codex)]:
+    try:
+        check()
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError, subprocess.SubprocessError):
+        report(name, 'unknown', False, 'check unavailable; diagnostics withheld')
+print('  ' + paint('-' * (width - 2), 'dim'))
+if all(mode == 'passthrough' for mode in modes):
+    mode_label = 'Host passthrough'
+elif all(mode == 'local login' for mode in modes):
+    mode_label = 'Local login (auth_all style)'
+else:
+    mode_label = 'Mixed / unknown sources'
+note(f'{passed}/3 passed | {mode_label}', 'amber' if failed else 'green')
+if actions:
+    print()
+    for action in actions:
+        note(action, 'amber')
+print()
+note('Sources: Host proxy = passthrough; Local login = saved auth_all-style credentials. The host proxy may still replace tokens.')
+note('OpenAI: model access, not inference. Expired local OAuth may need a harness refresh.')
+note('MCP: verify host OAuth through harness tools (Codex: /mcp).')
+print()
+sys.exit(1 if failed else 0)
+SBX_CREDENTIAL_CHECK
+}
+credential_check_contents > "$work_dir/sbx_check_credentials"
+replace_system_file "$work_dir/sbx_check_credentials" "$HOME/.local/bin/sbx_check_credentials" 755
+
 desktop_contents() {
     cat <<'SBX_DESKTOP'
 #!/usr/bin/env bash
@@ -1241,6 +1432,17 @@ ensure_bash_path "$login_file"
 # Preserve all existing system aliases and add the managed block only once.
 global_bashrc=/etc/bash.bashrc
 [[ -f "$global_bashrc" && -r "$global_bashrc" ]] || die "Cannot read: $global_bashrc"
+if ! grep -Fxq -- "alias check_credentials='\"\$HOME/.local/bin/sbx_check_credentials\"'" "$global_bashrc"; then
+    if grep -Eq -- '^[[:space:]]*alias[[:space:]]+check_credentials=' "$global_bashrc"; then
+        die 'Existing check_credentials alias differs; preserve or rename it before retrying.'
+    fi
+    cat -- "$global_bashrc" > "$work_dir/auth-check.bashrc"
+    cat >> "$work_dir/auth-check.bashrc" <<'SBX_AUTH_CHECK_ALIAS'
+
+alias check_credentials='"$HOME/.local/bin/sbx_check_credentials"'
+SBX_AUTH_CHECK_ALIAS
+    replace_system_file "$work_dir/auth-check.bashrc" "$global_bashrc"
+fi
 if ! grep -Fxq -- '# SBX Deploy: custom system aliases' "$global_bashrc"; then
     cat -- "$global_bashrc" > "$work_dir/bash.bashrc"
     cat >> "$work_dir/bash.bashrc" <<'SBX_ALIASES'
@@ -1986,7 +2188,7 @@ check_credential() {
         401)
             if [[ $service == github ]]; then
                 warn 'Host PowerShell: gh api user --jq .login'
-                warn 'If the host check works: sbx daemon restart (fixed missing proxy injection in this experiment).'
+                warn 'If the host check works: sbx daemon restart (typically needed for GitHub passthrough on this Windows v0.51.0 setup).'
                 warn "If no host GitHub secret exists: sbx secret set github --command 'gh auth token --hostname github.com'"
                 warn "If the host check fails: gh auth login --hostname github.com; then sbx secret set github --command 'gh auth token --hostname github.com' --force"
                 warn 'If still failing, check the GitHub apiKey binding in the host sbx/credentials.yaml file.'
@@ -2120,7 +2322,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive credential checks and source modes:\n  check_credentials\nGitHub passthrough on this Windows v0.51.0 setup typically needs a HOST sbx daemon restart after sandbox creation.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac

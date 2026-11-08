@@ -153,10 +153,13 @@ host `sbx ls`, then `sbx exec -it <sandbox-name> bash`, then run `desktop`.
 - Confirm the target with **host** `sbx ls`; use its current name below.
 - GitHub: compare **host** `gh api user --jq .login` with **host**
   `sbx exec <sandbox-name> gh api user --jq .login`. Both should return the same account.
-- If only the sandbox returns 401, verify the secret and binding above, then run
-  **host** `sbx daemon restart`. This fixed stale GitHub injection after fresh
-  sandbox creation on v0.51.0; stopping/starting the sandbox alone did not.
-  Restarting the daemon can interrupt sessions but preserves sandbox files.
+- On this v0.51.0 Windows setup, **`sbx daemon restart` is typically required
+  after creating a sandbox for GitHub credentials to pass through**. Host login
+  worked; reapplying the GitHub secret did not fix the sandbox's 401; restarting
+  the daemon did. This suggests stale daemon/proxy state, not a missing login.
+  Run the restart in host PowerShell, then repeat the sandbox API check.
+  It can interrupt sessions but preserves sandbox files. The installer does not
+  restart the host daemon.
 - If the host check fails, repair its `gh` login, then update the source with
   `sbx secret set github --command 'gh auth token --hostname github.com' --force`.
 - OpenAI: `sbx secret ls` should show `(oauth configured)`; renew with
@@ -167,6 +170,12 @@ host `sbx ls`, then `sbx exec -it <sandbox-name> bash`, then run `desktop`.
 - Recheck in **sandbox Bash**: `SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh`.
   Otherwise successful checks are cached. OpenAI's probe checks model-list access,
   not inference; try a new prompt in each harness to verify inference.
+- Run **sandbox** `check_credentials`
+  for live GitHub, OpenCode and Codex credential checks and source modes.
+  Passthrough uses host placeholders; local login is `auth_all` style. Mixed
+  setups are reported per harness. Source detection cannot prove which token
+  the host proxy ultimately sent. OpenAI checks model access, not inference;
+  MCP OAuth stays on the host and must be checked through each harness's tools.
 - Still failing? **Host** `sbx daemon status` shows the log path. Temporarily run
   `sbx daemon log-level set proxy debug`, reproduce one failure, then restore
   `sbx daemon log-level set proxy info`. Inspect recent entries for the target
