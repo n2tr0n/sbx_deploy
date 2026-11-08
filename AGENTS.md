@@ -14,12 +14,17 @@
 
 # Roadmap features
 
-- tighten; clear the vibe coded slop; review claude comments
+- doc deslop
 - less failure prone, atomic hardening etc.
 - release/public
 
 # Known issues
 
+- [AI-reported] Auth cache: `check_credential` can report old success after a failed recheck; clear the cache before fresh probes, and cache only success.
+- [AI-reported] Repeated OpenAI login: auth helpers trust `SBX_CRED_OPENAI_MODE` over saved credentials; detect local logins versus host placeholders and preserve `--force`.
+- [AI-reported] Shell startup hangs: bound the startup `flock 9` wait in `sbx-local-syslog`; warn and let shells continue, including noninteractive agent shells.
+- [AI-reported] Webtop prompt: FD 6 is closed by the wrapper; use terminal stdin (FD 0), keeping `/dev/tty` fallback and pasted-input protection.
+- [AI-reported] Missing GitHub CLI: installer auth checks, `check_credentials`, and `auth_gh` should identify missing `gh` instead of suggesting network or login repairs.
 - gh daemon restart; bug - sbx daemon must restart to enable gh cred passthrough on new win sandbox
 - MCP brokering; bug - must be configured outside the sandbox for every new sandbox
-- codex 'broken pipe' on select/copy - can't reproduce; INVEST
+- codex 'broken pipe' on select/copy - can't reproduce; investigate if we encounter it again
