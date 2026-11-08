@@ -4,7 +4,8 @@
 # 2. Show the SBX banner and verbose-mode command.
 # 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
-# 5. Install missing Codex CLI; download missing TPM/tmux-resurrect atomically.
+# 5. Install missing Codex CLI with labeled, bounded download/install/version steps;
+#    download missing TPM/tmux-resurrect atomically.
 #    Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 #    Seed the bundled resurrect snapshot only without user saves; restore manually.
@@ -62,6 +63,7 @@ sbx_save_and_run() {
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
+# Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask each run about optional Webtop; preserve desktop data and show access details.
 # Run desktop anytime for desktop status and host reconnection instructions.
@@ -531,32 +533,59 @@ else
     stage_done unchanged 'Already installed'
 fi
 
-stage_begin 'Codex' 'Checking existing installation'
-install_codex() (
-    local binary
+stage_begin 'Codex' 'Locating existing executable'
+install_codex() {
+    local binary status PATH="$HOME/.local/bin:$PATH"
     # Also find a previous standalone install before the calling shell reloads.
     # Supplying PATH prevents the upstream installer from editing shell files.
-    export PATH="$HOME/.local/bin:$PATH"
+    export PATH
     binary=$(type -P codex || :)
     if [[ -n $binary ]]; then
         [[ -f $binary && -x $binary ]] || die "Codex is not a usable executable: $binary"
-        "$binary" --version
-        return 0
+    else
+        # Never overwrite an unrelated file or dangling user-created symlink.
+        if exists "$HOME/.local/bin/codex"; then
+            die "Existing Codex path is unusable; repair it before retrying: $HOME/.local/bin/codex"
+        fi
+        stage_operation 'Downloading Codex installer (60s limit)'
+        # Download completely before executing; never run a partial response.
+        if curl -fsSL --connect-timeout 10 --max-time 60 \
+            -o "$work_dir/codex-install.sh" https://chatgpt.com/codex/install.sh; then
+            :
+        else
+            status=$?
+            die 'Codex installer download failed; check sandbox network/proxy access.' "$status"
+        fi
+        stage_operation 'Downloading/installing Codex'
+        # Noninteractive mode avoids a launch prompt; keep pasted input away
+        # from the installer. timeout also bounds its child download processes.
+        # Upstream stages releases before publishing; interruption is retryable.
+        if timeout --kill-after=5s 300s env CODEX_NON_INTERACTIVE=1 \
+            CODEX_INSTALL_DIR="$HOME/.local/bin" sh "$work_dir/codex-install.sh" </dev/null; then
+            :
+        else
+            status=$?
+            case $status in
+                124|137) die 'Codex installation exceeded 5 minutes; check network/proxy access and retry.' "$status" ;;
+                *) die 'Codex installation failed; see installer output below.' "$status" ;;
+            esac
+        fi
+        binary="$HOME/.local/bin/codex"
+        [[ -f $binary && -x $binary ]] || die 'Codex installation left no usable executable.'
+        touch -- "$work_dir/changed"
     fi
-    # Never overwrite an unrelated file or dangling user-created symlink.
-    if exists "$HOME/.local/bin/codex"; then
-        die "Existing Codex path is unusable; repair it before retrying: $HOME/.local/bin/codex"
+    stage_operation 'Checking Codex version (15s limit)'
+    printf 'Codex executable: %s\n' "$binary"
+    if timeout --kill-after=5s 15s "$binary" --version </dev/null; then
+        :
+    else
+        status=$?
+        case $status in
+            124|137) die "Codex version check timed out: $binary" "$status" ;;
+            *) die "Codex version check failed: $binary" "$status" ;;
+        esac
     fi
-    # pipefail preserves curl failures; noninteractive mode avoids a launch prompt.
-    # Upstream stages releases and publishes links only after validating them,
-    # so an interrupted download can be retried without touching credentials.
-    curl -fsSL https://chatgpt.com/codex/install.sh |
-        CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR="$HOME/.local/bin" sh
-    [[ -f $HOME/.local/bin/codex && -x $HOME/.local/bin/codex ]] ||
-        die 'Codex installation left no usable executable.'
-    "$HOME/.local/bin/codex" --version
-    touch -- "$work_dir/changed"
-)
+}
 install_codex
 if [[ -e $work_dir/changed ]]; then
     stage_done changed 'Installed Codex CLI'
