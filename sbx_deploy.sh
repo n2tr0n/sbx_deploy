@@ -21,7 +21,8 @@
 # 11. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
 #     Connect both harnesses to the sandbox's host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
-#    Install check_credentials for live credential checks and per-harness source modes.
+#    Install check_credentials for auth/source checks and check_mcp for MCP discovery.
+#    Print named host commands for GitHub recovery and Context7 attachment.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
 # 13. Ask on every run whether to deploy/start optional Ubuntu XFCE Webtop;
@@ -64,7 +65,8 @@ sbx_save_and_run() {
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
-# Run check_credentials for live credential checks and passthrough/local source modes.
+# Run check_credentials for auth/source checks; check_mcp lists brokered MCP tools.
+# Print host GitHub recovery and Context7 attachment commands for this sandbox.
 # Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask each run about optional Webtop; preserve desktop data and show access details.
@@ -97,7 +99,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive credential checks and source modes:\n  check_credentials\nGitHub passthrough on this Windows v0.51.0 setup typically needs a HOST sbx daemon restart after sandbox creation.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive checks:\n  check_credentials\n  check_mcp\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -376,7 +378,7 @@ cleanup_installer() {
     fi
 }
 finish_installer() {
-    local status=$? reason
+    local status=$? reason host_sandbox_arg
     trap - EXIT INT TERM
     set +e
     finishing=true
@@ -405,9 +407,24 @@ finish_installer() {
         printf '\nComplete%s%s stages changed%s%s unchanged%s%s verified%s%ss\n' \
             "$separator" "$changed_count" "$separator" "$unchanged_count" \
             "$separator" "$verified_count" "$separator" "$((SECONDS - started_at))" | tee -a -- "$log_file" >&3
+        host_sandbox_arg=${HOSTNAME:-}
+        if [[ ! $host_sandbox_arg =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+            host_sandbox_arg='$sandboxName'
+        fi
+        {
+            printf '\nWindows HOST PowerShell - new sandbox setup\n'
+            if [[ $host_sandbox_arg =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+                printf 'Sandbox: %s (from hostname; confirm with host sbx ls).\n' "$host_sandbox_arg"
+            else
+                printf 'Confirm the sandbox name first:\n  sbx ls\n  $sandboxName = Read-Host "Sandbox name"\n'
+            fi
+            printf '\nGitHub passthrough: typically needed after creation on Windows v0.51.0.\nSkip if GitHub already works; restarting can interrupt sandbox sessions.\n  sbx daemon restart\n'
+            printf '\nContext7: attach after the restart, if its tools are absent.\nHost registration/OAuth must already be configured.\n  sbx mcp load context7 --sandbox %s\n' "$host_sandbox_arg"
+            printf '\nBack in sandbox Bash:\n  check_credentials\n  check_mcp\n'
+        } | tee -a -- "$log_file" >&3
         if [[ -n $webtop_status ]]; then
-            printf '\nWebtop (%s): https://127.0.0.1:3001/\nHost PowerShell (once, if not already mapped):\n  sbx ports <sandbox-name> --publish 127.0.0.1:3001:3001\nUse the name from sbx ls. HTTPS uses a self-signed certificate.\n' \
-                "$webtop_status" | tee -a -- "$log_file" >&3
+            printf '\nWebtop (%s): https://127.0.0.1:3001/\nHost PowerShell (once, if not already mapped):\n  sbx ports %s --publish 127.0.0.1:3001:3001\nHTTPS uses a self-signed certificate.\n' \
+                "$webtop_status" "$host_sandbox_arg" | tee -a -- "$log_file" >&3
         fi
         printf '\nDesktop connection help anytime: desktop\n' | tee -a -- "$log_file" >&3
         if "$sbx_child_shell" || [[ $- != *i* ]]; then
@@ -1012,7 +1029,8 @@ passed = 0
 actions = []
 width = max(36, min(88, shutil.get_terminal_size((80, 24)).columns - 2))
 color = sys.stdout.isatty() and os.environ.get('TERM', 'dumb') != 'dumb' and 'NO_COLOR' not in os.environ
-palette = {'green': '\033[32m', 'amber': '\033[33m', 'dim': '\033[2m', 'bold': '\033[1m'}
+palette = {'green': '\033[32m', 'amber': '\033[33m', 'cyan': '\033[36m',
+           'dim': '\033[2m', 'bold': '\033[1m'}
 
 def paint(text, style):
     return palette[style] + text + '\033[0m' if color else text
@@ -1170,13 +1188,211 @@ if actions:
 print()
 note('Sources: Host proxy = passthrough; Local login = saved auth_all-style credentials. The host proxy may still replace tokens.')
 note('OpenAI: model access, not inference. Expired local OAuth may need a harness refresh.')
-note('MCP: verify host OAuth through harness tools (Codex: /mcp).')
 print()
 sys.exit(1 if failed else 0)
 SBX_CREDENTIAL_CHECK
 }
 credential_check_contents > "$work_dir/sbx_check_credentials"
 replace_system_file "$work_dir/sbx_check_credentials" "$HOME/.local/bin/sbx_check_credentials" 755
+
+mcp_check_contents() {
+    cat <<'SBX_MCP_CHECK'
+#!/usr/bin/env python3
+"""Discover brokered MCP tools without executing tools or changing attachments."""
+import http.client
+import json
+import os
+import re
+import shutil
+import socket
+import sys
+import textwrap
+import time
+import urllib.error
+import urllib.request
+
+if len(sys.argv) != 1:
+    sys.exit('Usage: check_mcp')
+
+width = max(36, min(88, shutil.get_terminal_size((80, 24)).columns - 2))
+color = sys.stdout.isatty() and os.environ.get('TERM', 'dumb') != 'dumb' and 'NO_COLOR' not in os.environ
+palette = {'green': '\033[32m', 'amber': '\033[33m', 'cyan': '\033[36m',
+           'dim': '\033[2m', 'bold': '\033[1m'}
+
+def paint(text, style):
+    return palette[style] + text + '\033[0m' if color else text
+
+def note(text, style='dim'):
+    for line in textwrap.wrap(text, width=width - 2):
+        print('  ' + paint(line, style))
+
+def check_mcp():
+    # Query only the shared managed endpoint. Never invoke upstream tools,
+    # authorization helpers, or dynamic attachment/configuration tools.
+    endpoint = 'http://mcp-gateway.docker.internal/mcp'
+    # The gateway alias can be routed by the SBX HTTP proxy. Honor the same
+    # proxy/NO_PROXY environment as clients instead of forcing direct DNS.
+    opener = urllib.request.build_opener()
+    headers = {'Content-Type': 'application/json',
+               'Accept': 'application/json, text/event-stream'}
+    deadline = time.monotonic() + 30
+    sequence = 0
+    phase = 'initialize'
+
+    def rpc(method, params=None, notification=False):
+        nonlocal sequence, phase
+        phase = method
+        sequence += 1
+        message = {'jsonrpc': '2.0', 'method': method}
+        if not notification:
+            message['id'] = sequence
+        if params is not None:
+            message['params'] = params
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('MCP discovery timed out')
+        request = urllib.request.Request(endpoint, json.dumps(message).encode(), headers)
+        with opener.open(request, timeout=min(10, remaining)) as response:
+            session = response.headers.get('Mcp-Session-Id')
+            if session:
+                if len(session) > 1024 or not re.fullmatch(r'[\x21-\x7e]+', session):
+                    raise ValueError('Invalid MCP session')
+                headers['Mcp-Session-Id'] = session
+            if notification:
+                return {}
+            reply = None
+            if 'text/event-stream' in response.headers.get('Content-Type', ''):
+                data, size = [], 0
+                while time.monotonic() < deadline:
+                    line = response.readline(1048577)
+                    size += len(line)
+                    if size > 1048576:
+                        raise ValueError('MCP response too large')
+                    if not line:
+                        break
+                    line = line.decode('utf-8').rstrip('\r\n')
+                    if line.startswith('data:'):
+                        data.append(line[5:].lstrip(' '))
+                    elif not line and data:
+                        reply = json.loads('\n'.join(data))
+                        data = []
+                        if isinstance(reply, dict) and reply.get('id') == sequence:
+                            break
+                else:
+                    raise ValueError('MCP discovery timed out')
+                if not isinstance(reply, dict) or reply.get('id') != sequence:
+                    raise ValueError('Missing MCP response')
+            else:
+                body = response.read(1048577)
+                if len(body) > 1048576:
+                    raise ValueError('MCP response too large')
+                reply = json.loads(body)
+            if not isinstance(reply, dict) or reply.get('id') != sequence or 'error' in reply:
+                raise ValueError('MCP request failed')
+            result = reply.get('result')
+            if not isinstance(result, dict):
+                raise ValueError('Invalid MCP result')
+            return result
+
+    print('\n  ' + paint('BROKERED MCP', 'bold'), flush=True)
+    print('  ' + paint('-' * (width - 2), 'dim'))
+    try:
+        result = rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
+                     'clientInfo': {'name': 'check_mcp', 'version': '1.0'}})
+        version = result.get('protocolVersion')
+        if version not in ('2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'):
+            raise ValueError('Unsupported MCP protocol')
+        headers['MCP-Protocol-Version'] = version
+        rpc('notifications/initialized', notification=True)
+        tools, cursors, cursor = [], set(), None
+        for page in range(20):
+            result = rpc('tools/list', {'cursor': cursor} if cursor else {})
+            batch = result.get('tools')
+            if not isinstance(batch, list) or any(not isinstance(tool, dict) for tool in batch):
+                raise ValueError('Invalid MCP tools')
+            tools.extend(batch)
+            cursor = result.get('nextCursor')
+            if not cursor:
+                break
+            if not isinstance(cursor, str) or cursor in cursors:
+                raise ValueError('Invalid MCP pagination')
+            cursors.add(cursor)
+        else:
+            raise ValueError('MCP pagination limit reached')
+        names = sorted({tool['name'] for tool in tools
+                        if isinstance(tool.get('name'), str)
+                        and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', tool['name'])})
+        note('PASS  Gateway connected', 'green')
+        # Docker documents these helpers as belonging to exposed OAuth servers.
+        # Their presence is not proof that a server currently has valid OAuth.
+        helpers = [name for name in names if name.endswith(('-authorize', '-revoke-auth'))]
+        servers = sorted({re.sub(r'-(?:authorize|revoke-auth)$', '', name) for name in helpers})
+        if servers:
+            note('Servers  ' + ', '.join(servers), 'cyan')
+        else:
+            note('Servers  Names hidden by gateway')
+        gateway_names = {'code-mode', 'mcp-exec', 'mcp-find', 'mcp-add', 'mcp-config-set'}
+        server_tools = [name for name in names if name not in gateway_names and name not in helpers]
+        gateway_tools = [name for name in names if name in gateway_names]
+        for label, group, style in [('SERVER TOOLS', server_tools, 'cyan'),
+                                    ('AUTH HELPERS', helpers, 'dim'),
+                                    ('GATEWAY TOOLS', gateway_tools, 'dim')]:
+            if group:
+                print()
+                note(f'{label} ({len(group)})', 'bold')
+                for name in group:
+                    note('  - ' + name, style)
+        if not names:
+            note('No displayable tools exposed.')
+        print()
+        note(f'{len(tools)} tools exposed | Discovery only; upstream OAuth unverified.')
+        if any(name in names for name in ('mcp-exec', 'code-mode')):
+            note('Additional upstream tools may be available through the gateway.')
+        print('  ' + paint('-' * (width - 2), 'dim'))
+        return True
+    except (OSError, ValueError, TypeError, KeyError, urllib.error.URLError,
+            http.client.HTTPException) as error:
+        # Report only status codes and known categories, never raw response
+        # bodies, headers, URLs with credentials, or remote error messages.
+        if isinstance(error, urllib.error.HTTPError):
+            reason = f'HTTP {error.code}'
+        else:
+            cause = error.reason if isinstance(error, urllib.error.URLError) else error
+            if isinstance(cause, socket.gaierror):
+                reason = 'DNS lookup failed'
+            elif isinstance(cause, (TimeoutError, socket.timeout)):
+                reason = 'request timed out'
+            elif isinstance(cause, ConnectionRefusedError):
+                reason = 'connection refused'
+            elif isinstance(error, json.JSONDecodeError):
+                reason = 'invalid JSON response'
+            elif isinstance(error, ValueError) and str(error) in {
+                'MCP discovery timed out', 'Invalid MCP session', 'MCP response too large',
+                'Missing MCP response', 'MCP request failed', 'Invalid MCP result',
+                'Unsupported MCP protocol', 'Invalid MCP tools', 'Invalid MCP pagination',
+                'MCP pagination limit reached',
+            }:
+                reason = str(error)
+            else:
+                reason = 'transport or protocol error'
+        note(f'CHECK | {phase} | {reason}', 'amber')
+        note('Routing follows sandbox proxy / NO_PROXY settings.')
+        note('Check host sbx mcp ls and sandbox attachments; verify tools in each harness.')
+        return False
+    finally:
+        if 'Mcp-Session-Id' in headers:
+            try:
+                request = urllib.request.Request(endpoint, headers=headers, method='DELETE')
+                with opener.open(request, timeout=3):
+                    pass
+            except (OSError, urllib.error.URLError, http.client.HTTPException):
+                pass  # Session termination is optional; never mask probe results.
+
+sys.exit(0 if check_mcp() else 1)
+SBX_MCP_CHECK
+}
+mcp_check_contents > "$work_dir/sbx_check_mcp"
+replace_system_file "$work_dir/sbx_check_mcp" "$HOME/.local/bin/sbx_check_mcp" 755
 
 desktop_contents() {
     cat <<'SBX_DESKTOP'
@@ -1432,17 +1648,34 @@ ensure_bash_path "$login_file"
 # Preserve all existing system aliases and add the managed block only once.
 global_bashrc=/etc/bash.bashrc
 [[ -f "$global_bashrc" && -r "$global_bashrc" ]] || die "Cannot read: $global_bashrc"
-if ! grep -Fxq -- "alias check_credentials='\"\$HOME/.local/bin/sbx_check_credentials\"'" "$global_bashrc"; then
-    if grep -Eq -- '^[[:space:]]*alias[[:space:]]+check_credentials=' "$global_bashrc"; then
-        die 'Existing check_credentials alias differs; preserve or rename it before retrying.'
-    fi
-    cat -- "$global_bashrc" > "$work_dir/auth-check.bashrc"
-    cat >> "$work_dir/auth-check.bashrc" <<'SBX_AUTH_CHECK_ALIAS'
+# Reconcile only our exact aliases; retain unrelated aliases and user edits.
+python3 - "$global_bashrc" "$work_dir/connection-checks.bashrc" <<'SBX_CHECK_ALIASES'
+from pathlib import Path
+import re
+import sys
 
-alias check_credentials='"$HOME/.local/bin/sbx_check_credentials"'
-SBX_AUTH_CHECK_ALIAS
-    replace_system_file "$work_dir/auth-check.bashrc" "$global_bashrc"
-fi
+source, staged = map(Path, sys.argv[1:])
+original = source.read_text()
+wanted = {
+    'check_credentials': 'alias check_credentials=\'"$HOME/.local/bin/sbx_check_credentials"\'',
+    'check_mcp': 'alias check_mcp=\'"$HOME/.local/bin/sbx_check_mcp"\'',
+}
+obsolete = {
+    'alias check_connections=\'"$HOME/.local/bin/sbx_check_connections"\'',
+    'alias auth_check=\'"$HOME/.local/bin/sbx-check-credentials"\'',
+}
+lines = original.splitlines(keepends=True)
+for name, desired in wanted.items():
+    if any(re.match(r'^\s*alias\s+' + name + '=', line)
+           and line.rstrip('\r\n') != desired for line in lines):
+        sys.exit(f'Existing {name} alias differs; preserve or rename it before retrying.')
+updated = ''.join(line for line in lines if line.rstrip('\r\n') not in obsolete)
+for desired in wanted.values():
+    if desired not in updated.splitlines():
+        updated += '\n' + desired + '\n'
+staged.write_text(updated)
+SBX_CHECK_ALIASES
+replace_system_file "$work_dir/connection-checks.bashrc" "$global_bashrc"
 if ! grep -Fxq -- '# SBX Deploy: custom system aliases' "$global_bashrc"; then
     cat -- "$global_bashrc" > "$work_dir/bash.bashrc"
     cat >> "$work_dir/bash.bashrc" <<'SBX_ALIASES'
@@ -2322,7 +2555,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive credential checks and source modes:\n  check_credentials\nGitHub passthrough on this Windows v0.51.0 setup typically needs a HOST sbx daemon restart after sandbox creation.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive checks:\n  check_credentials\n  check_mcp\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac

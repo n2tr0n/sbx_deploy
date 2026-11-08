@@ -67,6 +67,10 @@ runs remotely. No API key, sandbox package install, or credentials.yaml binding
 is needed for this OAuth setup. Docker Desktop MCP Toolkit registrations are
 separate from `sbx mcp`.
 
+The installer prints copyable host restart/Context7-load commands using the
+sandbox hostname; confirm the name with host `sbx ls`. Run the restart first
+when needed, then attach Context7 if absent and run sandbox `check_credentials` and `check_mcp`.
+
 Supported SBX agent integrations connect to the sandbox gateway at startup.
 The installer configures the same gateway URL in OpenCode and Codex, including
 Codex installed into an OpenCode sandbox. Host loading alone does not configure
@@ -170,12 +174,14 @@ host `sbx ls`, then `sbx exec -it <sandbox-name> bash`, then run `desktop`.
 - Recheck in **sandbox Bash**: `SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh`.
   Otherwise successful checks are cached. OpenAI's probe checks model-list access,
   not inference; try a new prompt in each harness to verify inference.
-- Run **sandbox** `check_credentials`
-  for live GitHub, OpenCode and Codex credential checks and source modes.
+- Run **sandbox** `check_credentials` for live GitHub, OpenCode and Codex
+  checks and credential sources; `check_mcp` lists brokered MCP servers/tools.
   Passthrough uses host placeholders; local login is `auth_all` style. Mixed
   setups are reported per harness. Source detection cannot prove which token
   the host proxy ultimately sent. OpenAI checks model access, not inference;
-  MCP OAuth stays on the host and must be checked through each harness's tools.
+  `check_mcp` lists gateway tools and visible OAuth server names; discovery
+  wrappers can hide upstream names/tools. Listing does not verify upstream OAuth;
+  try a tool in each harness. No tools are executed or servers attached by the check.
 - Still failing? **Host** `sbx daemon status` shows the log path. Temporarily run
   `sbx daemon log-level set proxy debug`, reproduce one failure, then restore
   `sbx daemon log-level set proxy info`. Inspect recent entries for the target

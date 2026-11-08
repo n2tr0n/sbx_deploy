@@ -14,8 +14,14 @@
 
 # Roadmap features
 
-- gh daemon restart; bug - sbx daemon must restart to enable gh cred passthrough on new win sandbox
 - broken pipe on codex select/copy
+- beautify script output
 - xwin startup question should skip on re-run if it's already deployed
 - tighten; clear the vibe coded slop; review claude comments
+- less failure prone, atomic hardening etc.
 - release/public
+
+# Known issues
+
+- gh daemon restart; bug - sbx daemon must restart to enable gh cred passthrough on new win sandbox
+- MCP brokering; bug - must be configured outside the sandbox for every new sandbox
