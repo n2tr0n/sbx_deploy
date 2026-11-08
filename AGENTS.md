@@ -17,6 +17,16 @@
 - Track reported issues in [BACKLOG.md](BACKLOG.md). Check each report against current code before changing behavior. Treat reported diagnoses as unverified.
 - Use ASD-STE100 principles where possible in documentation and comments. Use short sentences, direct instructions, and consistent terms. Preserve technical meaning. Prefer shorter text.
 
+## Validation
+
+The user runs these checks in disposable sandboxes after local review:
+
+- Fresh install: paste the entire installer. Check installation, terminal output, shell setup, tmux, logging, and helpers.
+- Unchanged rerun: confirm no package installs, network calls, configuration writes, or new backups.
+- Upgrade and preservation: check supported upgrades. Confirm user edits and unrelated settings are preserved.
+- Interrupted run: interrupt deployment, then rerun. Confirm safe completion and preserved user data.
+- Harness checks: confirm shared models, authentication, inference, and MCP tools in OpenCode and Codex.
+
 ## Roadmap
 
 - Improve reliability and atomic updates.
