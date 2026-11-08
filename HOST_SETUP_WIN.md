@@ -5,7 +5,9 @@ Real credentials stay in the host keychain. Sandbox files contain placeholders.
 The installer cannot configure or restart the host. Keep host settings outside
 sandbox-mounted workspaces. Never put real tokens in logs or chat.
 
-## Host setup
+## One-time host setup
+
+### Credentials
 
 Check `sbx secret ls` first. Skip correctly configured entries.
 Use ChatGPT subscription OAuth instead of an OpenAI API key:
@@ -19,7 +21,8 @@ sbx secret set github --command 'gh auth token --hostname github.com'
 ```
 
 Create `%APPDATA%\sbx\credentials.yaml` with these bindings.
-**If the file exists, add the bindings without replacing other entries.**
+If the file exists, merge missing entries under the existing keys. Do not
+duplicate `bindings:`, service, or mechanism keys. Preserve other entries and domains.
 This file holds permissions, not tokens.
 
 ```yaml
@@ -44,7 +47,7 @@ bindings:
 
 These settings survive sandbox recreation.
 
-## Context7 MCP gateway
+### Context7 registration
 
 In **host PowerShell**, check `sbx mcp ls` and `sbx mcp inspect context7`.
 Skip registration if a matching entry exists.
@@ -55,18 +58,25 @@ sbx mcp add context7 --url https://mcp.context7.com/mcp/oauth
 
 # Check authorization; run sbx mcp auth context7 if required:
 sbx mcp auth status context7
-
-# Attach to each sandbox; use its name from sbx ls:
-sbx mcp load context7 --sandbox <sandbox-name>
 ```
 
-Attachments survive restarts. Load only if absent, or use `--static-mcp context7`
-during sandbox creation. Registration and OAuth stay on the host. No API key or
+Registration and OAuth stay on the host. No API key or
 `credentials.yaml` binding is required. Docker Desktop MCP Toolkit registrations
 are separate from `sbx mcp`.
 
 [Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/),
 [Context7 OAuth guide](https://context7.com/docs/howto/oauth)
+
+## Per-sandbox MCP attachment
+
+For each running sandbox, attach Context7 if absent. Use its name from `sbx ls`:
+
+```powershell
+sbx mcp load context7 --sandbox <sandbox-name>
+```
+
+Attachments survive restarts. Alternatively, use `--static-mcp context7`
+during sandbox creation.
 
 ## Optional Webtop desktop
 
