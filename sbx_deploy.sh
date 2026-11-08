@@ -5,6 +5,7 @@
 # 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Install missing Codex CLI; download missing TPM/tmux-resurrect atomically.
+#    Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 #    Seed the bundled resurrect snapshot only without user saves; restore manually.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
@@ -61,6 +62,7 @@ sbx_save_and_run() {
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
+# Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask each run about optional Webtop; preserve desktop data and show access details.
 # Run desktop anytime for desktop status and host reconnection instructions.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
@@ -486,7 +488,7 @@ package_installed() {
 required_packages=(
     ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
     unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
-    libaa-bin python3 python3-passlib python3-tomlkit
+    libaa-bin python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux
 )
 missing_packages=()
 for package in "${required_packages[@]}"; do
@@ -645,6 +647,128 @@ replace_system_file() (
     staged=
     touch -- "$work_dir/changed"
 )
+
+# Sandbox-local syslog with facility.severity tags; preserve routing/rotation rules.
+# Start on the first Bash session after restart; earlier boot messages may be missed.
+# https://docs.docker.com/ai/sandboxes/usage/#set-environment-variables
+stage_begin 'Local syslog' 'Checking logging and restart hook'
+[[ -f /etc/logrotate.conf && -f /etc/logrotate.d/rsyslog ]] ||
+    die 'Missing distro logrotate configuration; restore the logrotate/rsyslog package files.'
+for syslog_file in /etc/rsyslog.d/00-sbx-local-format.conf /usr/local/sbin/sbx-local-syslog; do
+    if exists "$syslog_file"; then
+        run_as_root grep -q '^# SBX Deploy: local syslog\|^# SBX Deploy: local rsyslog' "$syslog_file" ||
+            die "Existing logging file is not managed by SBX Deploy: $syslog_file"
+    fi
+done
+cat > "$work_dir/rsyslog-format.conf" <<'SBX_SYSLOG_FORMAT'
+# SBX Deploy: local syslog format; retain the existing routing and permissions.
+# Explicit templates in user rules still take precedence.
+template(name="SBXLocalFormat" type="string"
+    string="%timegenerated:::date-rfc3339% %hostname% %syslogfacility-text%.%syslogseverity-text% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n")
+$ActionFileDefaultTemplate SBXLocalFormat
+SBX_SYSLOG_FORMAT
+replace_system_file "$work_dir/rsyslog-format.conf" /etc/rsyslog.d/00-sbx-local-format.conf 644
+cat > "$work_dir/sbx-local-syslog.sh" <<'SBX_SYSLOG_START'
+#!/bin/bash
+# SBX Deploy: local rsyslog and rotation without systemd or cron.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+if (( EUID != 0 )); then
+    exec sudo -n /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog "$@"
+fi
+rotate_logs() {
+    # Share the distro state/lock and policy with any existing scheduler.
+    # Reopen even after partial rotation failure; preserve the original error.
+    local status=0 hup_status
+    logrotate /etc/logrotate.conf || status=$?
+    if pkill -HUP -x rsyslogd; then
+        :
+    else
+        hup_status=$?
+        (( status != 0 )) || status=$hup_status
+    fi
+    return "$status"
+}
+if [[ ${1-} == --rotate ]]; then
+    # Descriptor 8 carries the lifetime lock from the launcher.
+    while :; do
+        sleep 3600 8>&-
+        if output=$(rotate_logs 2>&1); then
+            :
+        else
+            logger -p daemon.err -t sbx-logrotate -- "Rotation failed: $output"
+        fi
+    done
+fi
+exec 9>>/run/sbx-local-syslog.lock
+flock 9
+# Comparing with the daemon's PID file also recovers an interrupted install
+# that published the format but did not yet restart rsyslog.
+if [[ /etc/rsyslog.d/00-sbx-local-format.conf -nt /run/rsyslogd.pid ]] ||
+   ! pgrep -x rsyslogd >/dev/null; then
+    rsyslogd -N1
+    if pgrep -x rsyslogd >/dev/null; then
+        start-stop-daemon --stop --retry TERM/10 --exec /usr/sbin/rsyslogd
+    fi
+    rsyslogd
+    pgrep -x rsyslogd >/dev/null
+    printf 'Started rsyslog\n'
+fi
+# The lock survives in the worker, not its sleep children. Repeated startup
+# invocations and installer runs reuse the existing worker without rotating.
+exec 8>>/run/sbx-logrotate.lock
+if flock -n 8; then
+    # Start retries before the first pass, so a rotation error cannot leave
+    # logging without a scheduler. The first error still fails this invocation.
+    nohup /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog --rotate \
+        </dev/null >/dev/null 2>&1 3>&- 4>&- 6>&- 9>&- &
+    worker=$!
+    sleep 0.1
+    kill -0 "$worker"
+    printf 'Started logrotate worker\n'
+    rotate_logs
+fi
+SBX_SYSLOG_START
+[[ -d /usr/local/sbin ]] || run_as_root install -d -m 755 /usr/local/sbin
+replace_system_file "$work_dir/sbx-local-syslog.sh" /usr/local/sbin/sbx-local-syslog 755
+# Preserve existing persistent shell settings; publish the complete append once.
+syslog_shell=/etc/sandbox-persistent.sh
+syslog_shell_ready=false
+if exists "$syslog_shell"; then
+    [[ -f $syslog_shell && -r $syslog_shell ]] || die "Cannot read: $syslog_shell"
+    if grep -Fxq '# SBX Deploy: start sandbox logging on Bash startup' "$syslog_shell"; then
+        syslog_shell_ready=true
+    fi
+fi
+if ! "$syslog_shell_ready"; then
+    : > "$work_dir/syslog-shell"
+    if exists "$syslog_shell"; then
+        cat -- "$syslog_shell" > "$work_dir/syslog-shell"
+    fi
+    cat >> "$work_dir/syslog-shell" <<'SBX_SYSLOG_SHELL'
+
+# SBX Deploy: start sandbox logging on Bash startup
+# Clear BASH_ENV for the helper to avoid recursively sourcing this file.
+if [ -x /usr/local/sbin/sbx-local-syslog ]; then
+    if ! /usr/bin/sudo -n /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog >/dev/null; then
+        printf 'SBX logging startup failed; run: sudo env -u BASH_ENV bash /usr/local/sbin/sbx-local-syslog\n' >&2
+    fi
+fi
+SBX_SYSLOG_SHELL
+    if exists "$syslog_shell"; then
+        replace_system_file "$work_dir/syslog-shell" "$syslog_shell"
+    else
+        replace_system_file "$work_dir/syslog-shell" "$syslog_shell" 644
+    fi
+fi
+stage_operation 'Ensuring rsyslog and rotation are running'
+run_as_root /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog > "$work_dir/syslog-start"
+cat -- "$work_dir/syslog-start"
+if [[ -e $work_dir/changed || -s $work_dir/syslog-start ]]; then
+    stage_done changed 'Local syslog; Bash startup; hourly rotation checks'
+else
+    stage_done unchanged 'Logging and rotation already configured and running'
+fi
 
 stage_begin 'tmux configuration' 'Checking supplied configuration'
 # Keep the supplied tmux configuration verbatim. Its quoted heredoc defers HOME

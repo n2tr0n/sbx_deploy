@@ -14,8 +14,8 @@
 
 # Roadmap features
 
-- desktop
-- rsyslog
 - codex deployment delay
+- annoying gh restart
+- xwin startup question should skip on re-run if it's already deployed
 - tighten; clear the vibe coded slop
 - release/public
