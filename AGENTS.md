@@ -1,6 +1,7 @@
 # SBX Deploy
 
 - Maintain `sbx_deploy.sh` as a Bash installer for the Debian/Ubuntu sandbox.
+- Read [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for Windows host credentials, bindings, and proxy troubleshooting; keep it current when those requirements change.
 - Keep deployment-managed settings equivalent across all harnesses (models, subagents, MCP servers, and shared tools); use shared values and document unsupported differences.
 - Describe script behavior briefly in operational terms in its header; keep it current. Do not add to or expand `README.md` unless explicitly asked; keep it mercifully short.
 - Make idempotence a requirement for every change. After a successful run, an identical rerun should skip package installs, network calls, config rewrites, and new backups. Make interrupted runs safe to retry and preserve existing user data.
@@ -15,8 +16,7 @@
 
 - desktop
 - tmux default tabs populated
-- second harness
-- move primary auth config to host injection; auth_all is a override
-- context7 MCP
+- docker escape testing
+- context7 MCP (via gateway)
 - tighten; clear the vibe coded slop
 - release/public

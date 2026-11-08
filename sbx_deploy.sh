@@ -9,12 +9,18 @@
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
 #    including auth_all and individual OpenCode/Codex/GitHub auth with clipboard copying.
 #    Codex device login opens the browser with a manual URL fallback.
-#    Auth helpers skip existing logins; --force repeats login for one or all tools.
+#    Auth helpers are explicit sandbox-local overrides; --force repeats local login.
+#    Local logins do not disable Docker's host-side credential substitution.
 # 8. Install abbreviated-path Bash prompts: red root, green other users.
 # 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 10. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
-# 11. Clean up and summarize; refresh pasted/sourced interactive shells on success.
-#    Child-shell runs show manual reload instructions; list agent login commands.
+# 10. Import masked host OAuth into OpenCode; route Codex through the same proxy.
+#    Matching credentials/configs are untouched; existing local credentials are kept.
+# 11. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
+# 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
+#    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
+#    OpenAI checks model-list access, not inference; no agent tasks are started.
+# 13. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+#    Child-shell runs show manual reload instructions and local auth overrides.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 # Save before starting the installer, including when this entire file is pasted
@@ -47,7 +53,7 @@ sbx_save_and_run() {
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
 # Install sandbox tools, tmux configuration, login helpers/terminal clipboard, and prompts;
-# install Codex; skip existing logins unless --force; use Sol/Luna; keep five logs.
+# default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -76,7 +82,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_codex_openai\n- auth_gh\n\nAdd --force to any auth command to repeat login.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -193,7 +199,7 @@ if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
     fi
 fi
 started_at=$SECONDS
-stage= operation= spinner_pid= tee_pid= setup_session=
+stage= operation= spinner_pid= tee_pid= setup_session= auth_cache_staged=
 apt_status_file= apt_output_file=
 stage_started=$SECONDS
 operation_offset=0
@@ -319,6 +325,7 @@ stage_done() {
         verified)
             verified_count=$((verified_count + 1))
             result=CHECKED ;;
+        attention) result=ACTION color=$amber ;;
     esac
     report_row "$stage" "$result" "$message" "$color"
     printf '\n' >&3
@@ -343,6 +350,9 @@ die() {
     exit "$status"
 }
 cleanup_installer() {
+    if [[ -n $auth_cache_staged ]]; then
+        rm -f -- "$auth_cache_staged" || warn 'Could not remove temporary credential-check cache.'
+    fi
     if [[ -n $setup_session ]] &&
        /usr/bin/tmux has-session -t "=$setup_session" 2>/dev/null; then
         /usr/bin/tmux kill-session -t "=$setup_session" ||
@@ -757,10 +767,11 @@ import signal
 import subprocess
 import sys
 import termios
+import tempfile
 
 SBX_OPENAI_AUTH
     if [[ ${1-} == codex ]]; then
-        printf '%s\n' "command = ['codex', 'login', '--device-auth']"
+        printf '%s\n' "command = ['codex', '-c', 'model_provider=\"openai\"', '-c', 'forced_login_method=\"chatgpt\"', 'login', '--device-auth']"
     else
         cat <<'SBX_OPENAI_COMMAND'
 command = ['/home/agent/.opencode/bin/opencode', 'auth', 'login', 'openai',
@@ -856,6 +867,35 @@ except BaseException as error:
     raise
 finally:
     os.close(master)
+if status == 0 and command[0] == 'codex':
+    # Explicit local login overrides the managed provider only after success.
+    # Installer reruns restore the host proxy default. Never edit auth.json.
+    import tomlkit
+    config_dir = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
+    config_file = config_dir / 'config.toml'
+    if not config_dir.is_absolute() or config_file.is_symlink():
+        sys.exit('Local login succeeded, but the Codex configuration path is unsafe.')
+    if config_file.exists():
+        try:
+            original = config_file.read_text()
+            config = tomlkit.parse(original)
+        except (OSError, ValueError):
+            sys.exit('Local login succeeded, but Codex configuration could not be read.')
+        if config.get('model_provider') == 'sbx-chatgpt':
+            config['model_provider'] = 'openai'
+            if config.get('forced_login_method') == 'api':
+                del config['forced_login_method']
+            staged = None
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                                 dir=config_dir, delete=False) as handle:
+                    staged = Path(handle.name)
+                    handle.write(tomlkit.dumps(config))
+                staged.chmod(config_file.stat().st_mode & 0o777)
+                os.replace(staged, config_file)
+            finally:
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
 sys.exit(status if status >= 0 else 128 - status)
 SBX_OPENAI_AUTH
 }
@@ -936,6 +976,7 @@ fi
 
 # A shell function clears tokens in the calling shell, so subsequent gh commands
 # use the saved browser login too. An executable could only clear its own env.
+# Host proxy injection still applies; a local helper cannot override host bindings.
 cat > "$work_dir/gh-login.block" <<'SBX_GH_LOGIN'
 # SBX Deploy: GitHub browser login
 auth_gh() {
@@ -1008,6 +1049,13 @@ previous_status_helper = openai_helper.replace(
     r'\bOpenAI[ \t]+(?:\(?(?:oauth|api)\b|OpenAI[ \t]+stored\b)',
     r'\bOpenAI\s+\(?(?:oauth|api)\b')
 original = original.replace(previous_status_helper, openai_helper, 1)
+# A managed placeholder is not a sandbox-local login. Calling this helper is
+# an explicit override, so do not let the host credential short-circuit it.
+previous_openai_helper = openai_helper
+openai_helper = openai_helper.replace(
+    'if [[ ${1-} != --force ]] &&',
+    'if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&')
+original = original.replace(previous_openai_helper, openai_helper, 1)
 if openai_helper not in original:
     if 'auth_opencode_openai() {' in original:
         sys.exit('Existing OpenCode auth helper differs; cannot update automatically.')
@@ -1038,6 +1086,11 @@ auth_codex_openai() {
         "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty"
 }
 '''
+previous_status_codex_helper = codex_helper
+codex_helper = codex_helper.replace(
+    'if [[ ${1-} != --force ]] &&',
+    'if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&')
+original = original.replace(previous_status_codex_helper, codex_helper, 1)
 original = original.replace(previous_codex_helper, codex_helper, 1)
 if codex_helper not in original:
     if 'auth_codex_openai' in original:
@@ -1227,6 +1280,103 @@ else
 fi
 
 # Shared deployment defaults; each harness translates these to its own schema.
+oauth_access=oai-oat01-proxy-managed
+oauth_refresh=oai-ort01-proxy-managed
+oauth_provider=sbx-chatgpt
+oauth_base_url=https://chatgpt.com/backend-api/codex
+host_oauth=false
+stage_begin 'Host credentials' 'Checking proxy-managed OpenAI configuration'
+case ${SBX_CRED_OPENAI_MODE:-none} in
+    oauth) host_oauth=true ;;
+    *) warn 'Host OpenAI OAuth unavailable; configure it on the host and rerun.' ;;
+esac
+# GitHub mode can lag host updates. The live check below determines whether
+# GitHub access works instead of warning based only on the mode variable.
+if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
+    # Only the kit's masked bridge record may be imported. Exported credentials
+    # stay in memory: never put real local tokens in logs, temp files or backups.
+    # Use the kit's lock so its startup import cannot race this reconciliation.
+    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" <<'SBX_PROXY_OAUTH'
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+binary, access, refresh, changed = sys.argv[1:]
+data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
+if not data_home.is_absolute():
+    sys.exit('OpenCode data directory must be absolute.')
+directory = data_home / 'opencode'
+source = directory / 'auth.json'
+if source.is_symlink() or not source.is_file():
+    sys.exit('Missing regular OpenCode OAuth bridge file; restart the sandbox after authorizing host OAuth.')
+lock_path = directory / '.credentials-sync.lock'
+try:
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+except OSError:
+    sys.exit('Cannot open the OpenCode credential synchronization lock.')
+
+def run(*args, payload=None):
+    result = subprocess.run([binary, 'auth', *args, '--standalone'],
+                            input=payload, text=True, capture_output=True)
+    if result.returncode:
+        # Auth command diagnostics may contain secrets. Keep only its exit code.
+        print('OpenCode credential command failed; output withheld to protect credentials.', file=sys.stderr)
+        sys.exit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+    return result.stdout
+
+with os.fdopen(lock_fd, 'w') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        bridge = json.loads(source.read_text())
+        record = bridge['openai']
+        if (record['type'] != 'oauth' or record['access'] != access
+                or record['refresh'] != refresh):
+            raise ValueError()
+        expires = float(record['expires'])
+        if not math.isfinite(expires) or expires < 0 or not expires.is_integer():
+            raise ValueError()
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        sys.exit('Expected Docker OAuth placeholders and a valid expiry; local credentials left unchanged.')
+    value = dict(type='oauth', methodID='chatgpt-browser', access=access,
+                 refresh=refresh, expires=int(expires))
+    wanted = dict(id='sbx-openai', integrationID='openai', label='Sandbox OpenAI',
+                  active=True, value=value)
+    try:
+        existing = json.loads(run('export'))
+        if not isinstance(existing, list) or any(not isinstance(item, dict) for item in existing):
+            raise ValueError()
+    except (ValueError, TypeError):
+        sys.exit('Cannot parse OpenCode credential inventory; credentials left unchanged.')
+    matching = [item for item in existing if item.get('integrationID') == 'openai'
+                and item.get('id') == wanted['id']]
+    if len(matching) > 1:
+        sys.exit('Duplicate managed OpenCode credential IDs; credentials left unchanged.')
+    current = matching[0] if matching else None
+    if current:
+        stored = current.get('value')
+        if not isinstance(stored, dict) or stored.get('access') != access or stored.get('refresh') != refresh:
+            sys.exit('Managed OpenCode credential ID contains local data; refusing to replace it.')
+    if current and current.get('value') == value:
+        if current.get('active') is not True:
+            run('switch', 'openai', wanted['id'])
+            Path(changed).touch()
+    else:
+        run('import', payload=json.dumps([wanted]))
+        Path(changed).touch()
+SBX_PROXY_OAUTH
+fi
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Imported masked OpenCode OAuth from host bridge'
+elif "$host_oauth"; then
+    stage_done unchanged 'Host OAuth selected; masked credentials match'
+else
+    stage_done unchanged 'Host setup needed; local credentials preserved'
+fi
+
 main_model=gpt-6.1-sol
 subagent_model=gpt-6-luna
 stage_begin 'OpenCode models' 'Checking main and subagent models'
@@ -1351,7 +1501,7 @@ if [[ -f $work_dir/opencode-model.json ]]; then
 else
     stage_done unchanged 'Sol main and Luna subagent defaults match'
 fi
-stage_begin 'Codex models' 'Checking shared main and subagent defaults'
+stage_begin 'Codex defaults' 'Checking shared models and host OAuth routing'
 codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
 [[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
 codex_config="$codex_config_dir/config.toml"
@@ -1361,13 +1511,15 @@ if exists "$codex_config"; then
 fi
 # TOMLKit preserves comments and unrelated settings, including MCP servers.
 # Parse before publishing; matching settings leave the existing file untouched.
-python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" <<'SBX_CODEX_MODEL'
+python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
+    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" <<'SBX_CODEX_MODEL'
 from pathlib import Path
 import sys
 import tomlkit
 
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
+host_oauth, provider_id, base_url, access = sys.argv[5:9]
 original = source.read_text(encoding='utf-8') if source.exists() else ''
 try:
     config = tomlkit.parse(original)
@@ -1387,6 +1539,29 @@ for table, key, value in (
     if table.get(key) != value:
         table[key] = value
         changed = True
+if host_oauth == 'true':
+    if 'model_providers' not in config:
+        config['model_providers'] = tomlkit.table()
+    providers = config['model_providers']
+    if not isinstance(providers, (tomlkit.items.Table, tomlkit.items.InlineTable)):
+        sys.exit('Codex model_providers must be a table.')
+    desired = dict(name='SBX host ChatGPT OAuth', base_url=base_url,
+                   wire_api='responses', experimental_bearer_token=access,
+                   requires_openai_auth=False)
+    if provider_id in providers:
+        provider = providers[provider_id]
+        if (not isinstance(provider, (tomlkit.items.Table, tomlkit.items.InlineTable))
+                or dict(provider) != desired):
+            sys.exit('Existing sbx-chatgpt provider differs; refusing to replace user settings.')
+    if provider_id not in providers:
+        providers[provider_id] = desired
+        changed = True
+    if config.get('model_provider') != provider_id:
+        config['model_provider'] = provider_id
+        changed = True
+# No auth.json is created or copied. The provider bears only the shared Docker
+# sentinel; the proxy handles real tokens and refresh on the host. Local login
+# helpers switch back to the built-in provider after successful explicit login.
 if changed or not source.exists():
     staged.write_text(tomlkit.dumps(config), encoding='utf-8')
 SBX_CODEX_MODEL
@@ -1405,10 +1580,118 @@ install_codex_model() (
 )
 if [[ -f $work_dir/codex-model.toml ]]; then
     install_codex_model
-    stage_done changed 'Main: GPT-6.1 Sol; subagents: GPT-6 Luna'
+    stage_done changed 'Sol/Luna defaults; host OAuth routing when available'
 else
-    stage_done unchanged 'Sol main and Luna subagent defaults match'
+    stage_done unchanged 'Shared models and provider settings match'
 fi
+
+# Read-only credential probes. Successful results are cached by local setup,
+# without storing credential values; fingerprints contain hashes only. Host secrets can
+# change invisibly, so SBX_CHECK_AUTH=1 explicitly rechecks a cached success.
+# Failures are never cached. Probe output stays private and is not copied to the
+# installer log: diagnostics below contain only statuses and known commands.
+case ${SBX_CHECK_AUTH:-0} in
+    0|1) ;;
+    *) die 'SBX_CHECK_AUTH must be 0 or 1.' ;;
+esac
+check_credential() {
+    local service=$1 cache fingerprint output status code binary codex_binary path
+    stage_begin "$2" 'Checking credentials through the host proxy'
+    cache="$log_dir/auth-$service.sha256"
+    if exists "$cache"; then
+        [[ -f $cache && ! -L $cache && -r $cache ]] || die "Cannot read credential-check cache: $cache"
+    fi
+    binary=$(type -P gh || :)
+    codex_binary=$(PATH="$HOME/.local/bin:$PATH" type -P codex || :)
+    # Include routing, modes, binaries and managed configs. Token variables, if
+    # present, are fed directly into the hash and are never printed or stored.
+    fingerprint=$({
+        printf '%s\0' 'sbx-auth-check-v1' "$service" \
+            "${SBX_CRED_OPENAI_MODE:-none}" "${SBX_CRED_GITHUB_MODE:-none}" \
+            "${GH_TOKEN-}" "${GITHUB_TOKEN-}" "${GH_HOST-}" "${GH_CONFIG_DIR-}" \
+            "${HTTPS_PROXY-}" "${https_proxy-}" "${HTTP_PROXY-}" "${http_proxy-}" \
+            "${NO_PROXY-}" "${no_proxy-}" "$oauth_base_url" "$oauth_access"
+        for path in "$binary" "$codex_binary" "$opencode_binary" "$codex_config" "$opencode_config" \
+            "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"; do
+            if [[ -f $path ]]; then sha256sum -- "$path"; fi
+        done
+    } | sha256sum)
+    if [[ ${SBX_CHECK_AUTH:-0} != 1 && -f $cache && $(< "$cache") == "$fingerprint" ]]; then
+        stage_done unchanged 'Previously verified; SBX_CHECK_AUTH=1 checks again'
+        return 0
+    fi
+    code= status=0
+    if [[ $service == github ]]; then
+        if output=$(timeout 25s env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_DEBUG= \
+            gh api --hostname github.com user --jq .login 2> "$work_dir/auth-probe.stderr"); then
+            if [[ -n $output && $output != *$'\n'* && $output != *[!a-zA-Z0-9-]* ]]; then
+                code=200
+            else
+                code=unexpected
+            fi
+        else
+            status=$?
+            code=$(sed -nE 's/.*HTTP ([0-9]{3}).*/\1/p' "$work_dir/auth-probe.stderr" | tail -n 1)
+        fi
+    elif ! "$host_oauth"; then
+        warn 'OpenAI OAuth is not configured for this sandbox.'
+        warn 'Host PowerShell: sbx secret set openai --oauth; authorize the OpenAI OAuth binding, then restart the sandbox.'
+        stage_done attention 'OpenCode/Codex host OAuth needs setup'
+        return 0
+    else
+        # Use the same authenticated model-list route as Codex. This does not
+        # generate text, consume an agent task, or prove inference permissions.
+        output=$(env PATH="$HOME/.local/bin:$PATH" codex --version)
+        if [[ $output =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            output=${BASH_REMATCH[1]}
+        else
+            die 'Cannot determine the Codex version for the OAuth credential check.'
+        fi
+        if code=$(curl --disable --silent --show-error --connect-timeout 10 --max-time 25 \
+            --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer $oauth_access" \
+            "$oauth_base_url/models?client_version=$output" 2> "$work_dir/auth-probe.stderr"); then
+            :
+        else
+            status=$?
+        fi
+    fi
+    if [[ $code == 200 && $status == 0 ]]; then
+        auth_cache_staged=$(umask 077; mktemp -- "$cache.tmp.XXXXXX")
+        printf '%s\n' "$fingerprint" > "$auth_cache_staged"
+        mv -fT -- "$auth_cache_staged" "$cache"
+        auth_cache_staged=
+        if [[ $service == github ]]; then
+            stage_done verified 'GitHub account request accepted'
+        else
+            stage_done verified 'Shared OpenAI OAuth accepts model-list requests'
+        fi
+        return 0
+    fi
+    warn "$service credential check failed (HTTP ${code:-unknown}, exit $status)."
+    case $code in
+        401)
+            if [[ $service == github ]]; then
+                warn 'Host PowerShell: gh api user --jq .login'
+                warn 'If the host check works: sbx daemon restart (fixed missing proxy injection in this experiment).'
+                warn "If no host GitHub secret exists: sbx secret set github --command 'gh auth token --hostname github.com'"
+                warn "If the host check fails: gh auth login --hostname github.com; then sbx secret set github --command 'gh auth token --hostname github.com' --force"
+                warn 'If still failing, check the GitHub apiKey binding in the host sbx/credentials.yaml file.'
+            else
+                warn 'Host PowerShell: check sbx secret ls and the OpenAI OAuth binding; if configured, try sbx daemon restart.'
+                warn 'If OAuth needs renewal: sbx secret set openai --oauth'
+            fi
+            ;;
+        403) warn 'Check host credential permissions and sandbox network policy; do not switch to local login.' ;;
+        429) warn 'Service rate limit reached; retry later.' ;;
+        5??) warn 'Service or proxy error; retry later and inspect host proxy logs if it persists.' ;;
+        *) warn 'Check sandbox connectivity, proxy and CA trust; inspect host proxy logs. A timeout is not proof of bad credentials.' ;;
+    esac
+    warn 'After fixing it, in sandbox Bash: SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+    stage_done attention 'Authentication unverified; follow the actions above'
+}
+check_credential github 'GitHub auth'
+check_credential openai 'OpenAI auth'
 )
 SBX_DEPLOY_PAYLOAD
 )
@@ -1428,7 +1711,7 @@ case $? in
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nTo authenticate agents, run:\n\n  auth_all\n\nOr run individually:\n\n- auth_opencode_openai\n- auth_codex_openai\n- auth_gh\n\nAdd --force to any auth command to repeat login.\n\n'
+        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
