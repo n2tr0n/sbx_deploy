@@ -14,7 +14,6 @@
 
 # Roadmap features
 
-- beautify script output
 - xwin startup question should skip on re-run if it's already deployed
 - tighten; clear the vibe coded slop; review claude comments
 - less failure prone, atomic hardening etc.
