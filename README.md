@@ -9,12 +9,15 @@ and Bash aliases. It configures OpenCode and Codex for host credentials and the 
 To use other harnesses or providers, fork this project. Ask your coding agent to
 update the installer and authentication instructions for your requirements.
 
+This project has been tested on Windows hosts only at this time.
+
 ## Run
 
-Complete the Windows host setup in [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md).
-Inside the sandbox, use the default user with passwordless sudo.
-Paste the **entire script** into sandbox Bash.
-Press Enter. Follow the prompts. Read the final output for host setup and verification steps.
+- Complete the Windows host setup in [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md).
+- Inside the sandbox, use the default user with passwordless sudo.
+- Paste the **entire script** into sandbox Bash.
+- Press Enter and follow the prompts.
+- Read the final output for host setup and verification steps.
 
 Provided as-is, without warranty. Review the script before use.
 See [SECURITY.md](SECURITY.md) to report security issues.
