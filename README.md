@@ -9,7 +9,8 @@ and Bash aliases. It configures OpenCode and Codex for host credentials and the 
 To use other harnesses or providers, fork this project. Ask your coding agent to
 update the installer and authentication instructions for your requirements.
 
-This project has been tested on Windows hosts only at this time.
+**Experimental public alpha. Use only in disposable sandboxes.**
+Tested on Windows hosts only. See [BACKLOG.md](BACKLOG.md) for known issues.
 
 ## Run
 
