@@ -26,8 +26,3 @@ The user runs these checks in disposable sandboxes after local review:
 - Upgrade and preservation: check supported upgrades. Confirm user edits and unrelated settings are preserved.
 - Interrupted run: interrupt deployment, then rerun. Confirm safe completion and preserved user data.
 - Harness checks: confirm shared models, authentication, inference, and MCP tools in OpenCode and Codex.
-
-## Roadmap
-
-- Improve reliability and atomic updates.
-- Prepare a public release.
