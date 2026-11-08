@@ -1,23 +1,23 @@
 # SBX Deploy
 
-- Maintain `sbx_deploy.sh` as a Bash installer for the Debian/Ubuntu sandbox.
-- Read [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for Windows host credentials, bindings, and proxy troubleshooting; keep it current when those requirements change.
-- The installer runs inside the sandbox. Document required Windows host actions in `HOST_SETUP_WIN.md`; do not attempt them from the installer.
-- Keep deployment-managed defaults equivalent across all harnesses (models, subagents, MCP servers, and shared tools); use shared values, document unsupported differences, and preserve deliberate local overrides.
-- Update only recognized deployment-managed content. Preserve unrelated settings and user edits; stop with recovery instructions when ownership is uncertain.
-- Never log real credentials, replace host placeholders with tokens, or overwrite existing local logins implicitly.
-- Describe script behavior briefly in operational terms in its header; keep it current. Do not add to or expand `README.md` unless explicitly asked; keep it mercifully short.
-- Make idempotence a requirement for every change. After a successful run, an unchanged rerun must skip package installs, network calls, managed-config rewrites, and new backups unless an explicit refresh or recheck is requested. Make interrupted runs safe to retry and preserve existing user data.
-- Keep the SBX Deploy banner and supplied tmux config intact unless asked to change them.
-- Preserve the compact stage checklist, live APT progress, terminal fallbacks, and `SBX_VERBOSE=1` live output with five-run log retention. Route new work through the existing reporting helpers.
-- Keep Bash strict-mode failures effective: stop on errors, preserve exit codes, show a short reason/excerpt and log path, and clean up safely on failure or interruption.
-- Review changes statically, including generated scripts and embedded payloads. Use syntax checks where available; never execute the installer locally. Report which checks ran and which sandbox checks remain. The user runs the installer and tests it in their sandbox.
-- Preserve execution by pasting the entire file into interactive Bash and pressing Enter. Preserve the complete-file paste wrapper and literal payload boundaries; prompts must not consume pending pasted script text.
-- Assume passwordless sudo is available; use noninteractive elevation so missing privileges fail promptly.
-- Track reported issues in [BACKLOG.md](BACKLOG.md). Revalidate them against current code before changing behavior; reported diagnoses are not established facts.
+- Maintain `sbx_deploy.sh` as a Bash installer for Debian/Ubuntu sandboxes.
+- Read [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for Windows credentials, bindings, and proxy troubleshooting. Update it when host requirements change.
+- Run the installer inside the sandbox. Document Windows host actions in `HOST_SETUP_WIN.md`. Do not perform them from the installer.
+- Keep deployment defaults equivalent across harnesses: models, subagents, MCP servers, and shared tools. Use shared values. Document unsupported differences. Preserve deliberate local overrides.
+- Update only content that deployment owns. Preserve unrelated settings and user edits. If ownership is uncertain, stop and give recovery instructions.
+- Never log real credentials. Never replace host placeholders with tokens. Never overwrite local logins without an explicit request.
+- Describe installer operations briefly in its header. Keep it current. Do not add to or expand `README.md` unless asked. Keep it short.
+- Make each change idempotent. After success, an unchanged rerun must skip package installs, network calls, configuration writes, and new backups. An explicit refresh or recheck can repeat them. Make interrupted runs safe to retry. Preserve user data.
+- Preserve the SBX Deploy banner and supplied tmux configuration unless asked to change them.
+- Preserve the compact stage checklist, live APT progress, terminal fallbacks, and `SBX_VERBOSE=1` live output. Keep five run logs. Use the existing reporting helpers for new operations.
+- Preserve Bash strict-mode error handling. Stop on errors. Preserve exit codes. Show a short reason or excerpt and the log path. Clean up safely after failure or interruption.
+- Review changes without running the installer, including generated scripts and embedded payloads. Run available syntax checks. Report completed checks and remaining sandbox checks. The user tests the installer in their sandbox.
+- Preserve complete-file paste execution in interactive Bash. Keep the outer wrapper and literal payload boundaries. Prompts must not read pending script text as input.
+- Assume passwordless sudo is available. Use noninteractive elevation so missing privileges cause an immediate failure.
+- Track reported issues in [BACKLOG.md](BACKLOG.md). Check each report against current code before changing behavior. Treat reported diagnoses as unverified.
+- Use ASD-STE100 principles where possible in documentation and comments. Use short sentences, direct instructions, and consistent terms. Preserve technical meaning. Prefer shorter text.
 
-# Roadmap features
+## Roadmap
 
-- less failure prone, atomic hardening etc.
-- release/public
-
+- Improve reliability and atomic updates.
+- Prepare a public release.

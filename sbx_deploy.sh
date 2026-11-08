@@ -1,50 +1,43 @@
 #!/usr/bin/env bash
-# Features, in execution order (keep current):
-# Serialize deployment under /run; preserve edited helpers using private baselines.
-# Stage shell loaders together, reject intervening edits, and bound unattended work.
-# 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
-# 2. Show the unchanged SBX artwork with terminal-aware green/grey accents.
-#    Require terminal confirmation of the hostname before deployment (default No).
-# 3. Align stage/result/details columns; show APT names and retain five private logs.
-#    Show the log path before stages and again at exit.
-# 4. Validate paths; install missing packages (cmatrix alone omits recommends).
-# 5. Install missing Codex CLI with labeled, bounded download/install/version steps;
-#    download missing TPM/tmux-resurrect atomically.
-#    Start sandbox rsyslog/rotation on Bash startup, including after restarts.
-# 6. Back up/update tmux configuration; load plugins and verify bindings.
-#    Seed the bundled resurrect snapshot only without user saves; restore manually.
-# 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
-#    keeping new user helpers owned by the caller even in root-owned directories.
-#    including auth_all and individual OpenCode/Codex/GitHub auth with clipboard copying.
-#    Codex device login opens the browser with a manual URL fallback.
-#    Auth helpers are explicit sandbox-local overrides; --force repeats local login.
-#    Local logins do not disable Docker's host-side credential substitution.
-# 8. Install abbreviated-path Bash prompts: red root, green other users.
-# 9. Upgrade existing /home/agent/.opencode/bin/opencode once per binary checksum.
-# 10. Import masked host OAuth into OpenCode; route Codex through the same proxy.
-#    Matching credentials/configs are untouched; existing local credentials are kept.
-# 11. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
-#     Connect both harnesses to the sandbox's host-managed MCP gateway.
-# 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
-#    Install check_credentials for auth/source checks and check_mcp for MCP discovery.
-#    Consolidate detected issues and relevant host recovery actions at the end.
-#    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
-#    OpenAI checks model-list access, not inference; no agent tasks are started.
-# 13. Ask to deploy optional Ubuntu XFCE Webtop only if its container is absent;
-#     preserve existing running/stopped desktops; show URL and host port command.
-#     Install desktop with boxed status, URL and host reconnection commands.
-# 14. Clean up and summarize; refresh pasted/sourced interactive shells on success.
-#    Box the result/actions; show checks, desktop access, reload help and log path.
-#    Print host daemon restart and named Context7 attachment commands.
+# Deployment operations (keep current):
+# Lock /run/sbx-deploy.lock before saving ~/sbx_deploy.sh. Back up changed copies.
+# Preserve edited helpers with private baselines. Check shell migrations before writes.
+# Reject concurrent edits. Set time limits for unattended commands.
+# 1. Show the SBX banner. Require hostname confirmation from a terminal (default No).
+# 2. Show compact stages and live APT progress. Keep five private run logs.
+# 3. Check paths. Install missing packages; omit recommended packages for cmatrix only.
+# 4. Install missing Codex with download, install, and version time limits.
+#    Download missing TPM/tmux-resurrect atomically.
+# 5. Start rsyslog and log rotation on Bash startup, including after restarts.
+# 6. Back up and update tmux configuration. Load plugins and check bindings.
+#    Add the bundled resurrect snapshot only without user saves. Restore it manually.
+# 7. Install UTF-8 tmux/btop wrappers, PATH entries, aliases, and login helpers.
+#    New user helpers belong to the caller, including in root-owned directories.
+#    Provide auth_all and individual OpenCode/Codex/GitHub logins with clipboard copying.
+#    Open the Codex device-login browser. Show a URL if browser opening fails.
+#    Local logins are explicit overrides; --force repeats login. Host substitution stays active.
+# 8. Install abbreviated-path prompts: red for root, green for other users.
+# 9. Upgrade /home/agent/.opencode/bin/opencode once per binary checksum, if installed.
+# 10. Import masked host OAuth into OpenCode. Route Codex through the same proxy.
+#     Preserve matching configuration and existing local credentials.
+# 11. Use GPT-6.1 Sol for main agents and GPT-6 Luna for subagents in both harnesses.
+#     Connect both harnesses to the shared host-managed MCP gateway.
+# 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
+#     Install check_credentials and check_mcp. Cache successes; SBX_CHECK_AUTH=1 checks again.
+#     OpenAI checks model-list access only. No agent tasks start.
+# 13. Offer Ubuntu XFCE Webtop only if its container is absent. Preserve existing desktops.
+#     Install desktop to show status, URL, and host reconnection and port commands.
+# 14. Clean up. Show results, recovery actions, checks, desktop access, and log path.
+#     Show host daemon restart and Context7 attachment commands.
+#     Refresh pasted or sourced interactive shells after success.
 #
-# Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
-# Save before starting the installer, including when this entire file is pasted
-# into Bash. The quoted payload is data until the complete outer block is parsed.
+# Paste the entire file into Bash. Rerun with: bash ~/sbx_deploy.sh
+# Save before deployment. The literal payload remains data until Bash parses the outer block.
 {
 (
 set -euo pipefail
 exec 6<&0
-# Capture invocation before entering a function/eval, which changes BASH_SOURCE.
+# Record the invocation before a function or eval changes BASH_SOURCE.
 sbx_child_shell=false
 if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]]; then
     sbx_child_shell=true
@@ -59,7 +52,7 @@ sbx_save_and_run() {
     local deploy_lock=/run/sbx-deploy.lock
     local -a lock_root=()
     (( EUID == 0 )) || lock_root=(sudo -n)
-    # /run is root-owned. Create without clobbering; never follow a planted link.
+    # /run is root-owned. Create without overwriting. Never follow a symlink.
     "${lock_root[@]}" sh -c '
         if [ ! -e "$1" ] && [ ! -L "$1" ]; then
             (umask 022; set -C; : > "$1")
@@ -81,9 +74,8 @@ sbx_save_and_run() {
     original=$(umask 077; mktemp -- "$target.input.XXXXXX")
     if [[ -f $target ]]; then cp -p -- "$target" "$original"; was_present=true; fi
     staged=$(umask 077; mktemp -- "$target.tmp.XXXXXX")
-    # Recreate this wrapper around the literal payload. declare -f gives the
-    # saved copy the same save-first behavior without relying on shell history,
-    # a source filename, or an exported variable from the calling shell.
+    # Recreate the wrapper around the literal payload with declare -f.
+    # The saved copy needs no shell history, source filename, or exported variable.
     {
         # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
@@ -114,8 +106,8 @@ SBX_SAVED_HEADER
         printf 'SBX_DEPLOY_PAYLOAD\n'
         cat <<'SBX_CALLER_REFRESH'
 )
-# Keep the installer unguarded: an if/&& around it would disable errexit inside.
-# This enclosing brace is parsed before execution, preserving pasted input.
+# Do not guard the installer with if or &&. That disables errexit inside.
+# Bash parses the outer brace before execution to protect pasted input.
 case $? in
     0)
         if [[ $- == *i* && ${BASH_SOURCE[0]:-} != "$0" ]]; then
@@ -183,12 +175,9 @@ SBX_CALLER_REFRESH
     fi
     rm -f -- "$original"
     original=
-    # Keep signal traps while the foreground payload runs, retaining the lock
-    # through child cleanup even when this wrapper receives an interrupt.
-    # Execute only the literal installer payload, avoiding recursive execution
-    # of the saved wrapper. The payload keeps its own isolated subshell/traps.
-    # Only this parent holds the deployment lock. All installer descendants,
-    # including detached tmux/logging workers, start with its descriptor closed.
+    # Keep traps and the lock through child cleanup, including after interruption.
+    # Run only the literal payload. It has its own subshell and traps.
+    # Only this parent holds the lock. Close its descriptor in all descendants.
     (exec 9>&-; eval "$payload" <&6 6<&-)
     trap - EXIT INT TERM
 }
@@ -196,7 +185,7 @@ sbx_save_and_run <<'SBX_DEPLOY_PAYLOAD'
 (
 set -euo pipefail
 
-# Shared values precede every generated helper; installed helpers embed a snapshot.
+# Define shared values before generating helpers. Installed helpers contain a copy.
 main_model=gpt-6.1-sol
 subagent_model=gpt-6-luna
 oauth_access=oai-oat01-proxy-managed
@@ -247,8 +236,8 @@ while IFS= read -r line; do
             line=${line/"$label"/"$banner_bright_green$label$banner_grey"}
             ;;
         7)
-            # Em dashes can count as bytes in a non-UTF-8 locale. Anchor the
-            # color boundary to the X rather than slicing through this row.
+            # Non-UTF-8 locales can count em dashes as bytes.
+            # Use the X to locate the color boundary without splitting this row.
             logo_tail='  /  \  \'
             line="${line:0:6}$green${line:6}"
             line=${line/"$logo_tail"/"$logo_tail$banner_grey"}
@@ -285,8 +274,8 @@ done <<'SBX_BANNER'
 SBX_BANNER
 
 # Read from the terminal, never from a pasted payload or piped shell commands.
-# Saving the installer above is intentional; declining skips deployment and
-# returns 130 so the outer wrapper does not refresh the calling shell.
+# Save before confirmation. A refusal skips deployment and returns 130.
+# The outer wrapper then skips the calling shell refresh.
 confirmation_fd=
 if [[ -t 0 ]]; then
     confirmation_fd=0
@@ -323,8 +312,8 @@ resurrect_plugin="$resurrect_dir/resurrect.tmux"
 
 exists() { [[ -e "$1" || -L "$1" ]]; }
 
-# Reporting uses separate terminal descriptors so command output stays in the
-# log. Everything remains inside the pasted subshell, including these redirects.
+# Use separate terminal descriptors to keep command output in the log.
+# Keep redirects inside the pasted subshell.
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/sbx-deploy"
 if ! (umask 077; mkdir -p -m 700 -- "$log_dir") ||
    [[ -L "$log_dir" || ! -O "$log_dir" ]] ||
@@ -353,7 +342,7 @@ github_auth_status='not checked'
 openai_auth_status='not checked'
 declare -a issue_keys=() issue_titles=() issue_details=() issue_actions=()
 
-# A warning is one issue, even when several recovery steps belong to it.
+# Count each issue once, regardless of its recovery steps.
 record_issue() {
     local key=$1 title=$2 detail=$3 actions=${4-} i
     for ((i=0; i<${#issue_keys[@]}; i++)); do
@@ -365,7 +354,7 @@ record_issue() {
     printf 'Warning: %s - %s\n%s\n' "$title" "$detail" "$actions" >> "$log_file"
 }
 
-# Emit plain text to the private log separately from terminal styling.
+# Write plain text to the private log. Apply styling only to terminal output.
 report_line() {
     printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3
     printf '%s\n' "$1" >> "$log_file"
@@ -441,8 +430,8 @@ summary_command() {
     fi
 }
 
-# Pad plain text separately from ANSI colors so all terminal modes share the
-# same columns. Callers choose a newline or an in-place spinner refresh.
+# Pad text separately from ANSI colors to align columns in all terminal modes.
+# Callers select a newline or an in-place spinner update.
 report_row() {
     printf '  %-18s | %s%-7s%s | %s' "$1" "${4-}" "$2" "$reset" "$3" >&3
 }
@@ -454,9 +443,8 @@ stop_spinner() {
         printf '\r\033[2K' >&3
     fi
 }
-# Drain verbose output at operation boundaries so log offsets and result rows
-# cannot overtake output still buffered in tee. These are never guarded calls to
-# installation functions: errexit remains active in the actual work below.
+# Flush tee output between operations to keep log offsets and result rows aligned.
+# These calls do not guard installation functions. errexit stays active below.
 drain_output() {
     if [[ -n $tee_pid ]]; then
         exec >> "$log_file" 2>&1
@@ -499,9 +487,8 @@ start_spinner() {
                             END { print name }
                         ')
                     fi
-                    # APT writes structured progress separately from its normal
-                    # output. Ignore partial/unknown records and retain the last
-                    # valid update until the next one arrives.
+                    # APT writes structured progress separately from normal output.
+                    # Ignore incomplete or unknown records. Keep the last valid update.
                     while IFS=: read -r kind item percent description; do
                         # Multiarch package names can contain an extra colon.
                         if [[ $kind == pmstatus && $percent == [a-z]* && $description == *:* ]]; then
@@ -654,8 +641,7 @@ finish_installer() {
             summary_text "${issue_details[i]}"
             while IFS= read -r action; do
                 if [[ $action == '  '* ]]; then
-                    # Keep commands intact, without prose wrapping or box padding
-                    # becoming part of a command that exceeds the box width.
+                    # Do not wrap commands. Keep box padding out of commands wider than the box.
                     summary_command "${action#  }"
                 elif [[ -n $action ]]; then
                     summary_text ''
@@ -744,8 +730,8 @@ printf '\n  -------------------+---------+--------------------------------------
 capture_output
 
 stage_begin 'Checks' 'Checking existing setup'
-# Only our exact log filename format is eligible for retention. Always keep this
-# run plus the four newest other logs, even when timestamps happen to tie.
+# Apply retention only to the exact deployment log filename format.
+# Keep this run and the four newest other logs, including when timestamps match.
 retained=0
 if find "$log_dir" -maxdepth 1 -type f -printf '%T@ %f\0' |
    sort -z -nr > "$work_dir/logs"; then
@@ -778,8 +764,8 @@ resurrect_ready() {
     [[ -f "$resurrect_plugin" && -r "$resurrect_plugin" && -x "$resurrect_plugin" ]]
 }
 
-# Refuse to overwrite user-owned or incomplete checkouts. New clones are staged
-# below, so an interrupted download cannot leave a partial final checkout.
+# Do not overwrite user-owned or incomplete checkouts.
+# Stage new clones to prevent incomplete checkouts after interrupted downloads.
 if exists "$tpm_dir"; then
     tpm_ready || die "Existing TPM path is unusable: $tpm_dir"
 fi
@@ -791,9 +777,8 @@ if exists "$conf" && [[ ! -f "$conf" ]]; then
 fi
 stage_done verified 'Paths validated'
 
-# Check local dpkg state before doing any network work. Keep cmatrix separate
-# because only that package should omit recommended dependencies. Python 3 and
-# passlib support the makepass alias installed below.
+# Check local dpkg state before network access.
+# Only cmatrix omits recommended dependencies. Python 3 and passlib support makepass.
 stage_begin 'Packages' 'Checking installed packages'
 package_installed() {
     [[ $(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null) == installed ]]
@@ -822,9 +807,9 @@ if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
         stop_spinner
         (umask 077; : > "$apt_status_file"; : > "$apt_output_file")
         stage_operation "$message"
-        # sudo normally closes extra descriptors. Open the progress descriptor
-        # after elevation, using positional arguments to preserve path quoting.
-        # Call this helper directly so errexit propagates an apt failure.
+        # Open the progress descriptor after sudo closes extra descriptors.
+        # Use positional arguments to preserve path quoting.
+        # Call directly so errexit stops on APT failure.
         run_as_root sh -c '
             exec 5> "$1"
             shift
@@ -869,9 +854,8 @@ install_codex() {
             die 'Codex installer download failed; check sandbox network/proxy access.' "$status"
         fi
         stage_operation 'Downloading/installing Codex'
-        # Noninteractive mode avoids a launch prompt; keep pasted input away
-        # from the installer. timeout also bounds its child download processes.
-        # Upstream stages releases before publishing; interruption is retryable.
+        # Disable launch prompts. Keep pasted input away from the installer.
+        # timeout also limits child downloads. Upstream stages releases; interruptions are retryable.
         if timeout --kill-after="${kill_seconds}s" "${install_seconds}s" env CODEX_NON_INTERACTIVE=1 \
             CODEX_INSTALL_DIR="$HOME/.local/bin" sh "$work_dir/codex-install.sh" </dev/null; then
             :
@@ -936,8 +920,8 @@ else
     stage_done unchanged 'Already installed'
 fi
 
-# Snapshot before editing, then compare immediately before publication. This
-# detects intervening edits; arbitrary external editors do not take our lock.
+# Copy before editing. Compare immediately before publication to detect concurrent edits.
+# External editors do not use the deployment lock.
 snapshot_file() {
     local target=$1 original=$2 present=$3
     if exists "$target"; then
@@ -959,9 +943,8 @@ assert_input() {
     fi
 }
 
-# Shared atomic replacement for system configuration. A matching file is a no-op;
-# changed files get a metadata-preserving backup before the rename. Symlinks
-# are rejected. Reuse an identical backup after an interrupted run.
+# Replace system configuration atomically. Skip matching files. Reject symlinks.
+# Preserve metadata in backups before renaming. Reuse identical backups after interruption.
 replace_system_file() (
     local source=$1 target=$2 mode=${3-} staged= backup compare_status
     local original=${4:-} present=${5:-} snapshot=
@@ -983,8 +966,8 @@ replace_system_file() (
         [[ ! -L "$target" ]] || die "Configuration differs; update its symlink target: $target"
     fi
 
-    # Elevate staging as well as publication: an interrupted older run may
-    # have left root-owned helper directories inside HOME. Keep their ownership.
+    # Elevate staging and publication for existing root-owned directories in HOME.
+    # Preserve directory ownership.
     staged=$(run_as_root mktemp -- "$target.tmp.XXXXXX")
     if exists "$target"; then
         run_as_root cp -p -- "$target" "$staged"
@@ -1032,8 +1015,8 @@ replace_system_file() (
     touch -- "$work_dir/changed"
 )
 
-# One content-based ownership policy for every generated helper. Baselines are
-# private deployment state, recorded only after successful file publication.
+# Determine ownership from content for all generated helpers.
+# Record private baselines only after successful file publication.
 managed_conflict() {
     die "Managed file differs: $1. Preserve/rename it, or restore the baseline in $log_dir/managed after reviewing your edits, then rerun. No force overwrite is available."
 }
@@ -1081,8 +1064,8 @@ install_managed_file() (
     input_dir=$(mktemp -d -- "$work_dir/managed-input.XXXXXX")
     snapshot_file "$target" "$input_dir/input" "$input_dir/exists"
     managed_preflight "$target" "$desired" "$mode"
-    # Create user helper directories without sudo when the nearest existing
-    # ancestor is writable. Older root-owned directories use elevated staging.
+    # Create user helper directories without sudo if the nearest existing ancestor is writable.
+    # Use elevated staging for older root-owned directories.
     local parent=${target%/*} ancestor=${target%/*}
     while ! exists "$ancestor"; do
         ancestor=${ancestor%/*}
@@ -1116,8 +1099,8 @@ queue_helper() {
     queue_managed_file "$target" "$desired"
 }
 
-# Sandbox-local syslog with facility.severity tags; preserve routing/rotation rules.
-# Start on the first Bash session after restart; earlier boot messages may be missed.
+# Add facility.severity tags to sandbox syslog. Preserve routing and rotation rules.
+# Start with the first Bash session after restart. Earlier boot messages can be missed.
 # https://docs.docker.com/ai/sandboxes/usage/#set-environment-variables
 stage_begin 'Local syslog' 'Checking logging and restart hook'
 [[ -f /etc/logrotate.conf && -f /etc/logrotate.d/rsyslog ]] ||
@@ -1198,8 +1181,8 @@ queue_managed_file /usr/local/sbin/sbx-local-syslog "$work_dir/sbx-local-syslog.
 stage_done verified 'Logging ownership checked; publish with shell setup'
 
 stage_begin 'tmux configuration' 'Checking supplied configuration'
-# Keep the supplied tmux configuration verbatim. Its quoted heredoc defers HOME
-# and tmux format expansion until tmux reads the installed configuration.
+# Preserve the supplied tmux configuration. The quoted heredoc prevents early expansion
+# of HOME and tmux formats.
 new_conf="$work_dir/tmux.conf"
 cat > "$new_conf" <<'TMUX_CONF'
 set -g mouse on
@@ -1262,8 +1245,8 @@ for binding in /tpm/bindings/install_plugins /tmux-resurrect/scripts/{save,resto
 done
 stage_done verified 'Plugin bindings loaded'
 
-# Ask the installed plugin for its effective directory, including custom options
-# and its legacy/XDG defaults. Do not change the supplied tmux configuration.
+# Get the plugin's save directory, including custom options and legacy/XDG defaults.
+# Preserve the supplied tmux configuration.
 stage_begin 'tmux snapshot' 'Checking saved resurrect state'
 resurrect_state_dir=$(
     # Third-party helpers are not written for nounset.
@@ -1281,18 +1264,17 @@ seed_resurrect_snapshot() (
         [[ -d $state_dir && ! -L $state_dir ]] ||
             die "Cannot seed a symlink or non-directory resurrect path: $state_dir"
     fi
-    # Even dangling links, empty saves, and older snapshots without a last link
-    # belong to the user. Only our exact seed filename is eligible for recovery.
+    # Preserve dangling links, empty saves, and old snapshots without a last link.
+    # Recover only the exact deployment seed filename.
     exists "$state_dir/last" && return 0
     for saved in "$state_dir"/tmux_resurrect_*.txt; do
         if exists "$saved" && [[ $saved != "$state_dir/$seed" ]]; then
             return 0
         fi
     done
-    # Exact 725-byte export: six single-pane windows (cli, cli2, opencode,
-    # codex, btop, log), all in /c/repo/docker-sandbox-testrepo. This directory
-    # and application state are not bundled; normal resurrect process rules apply.
-    # Base64 preserves literal tabs and trailing fields through copy/paste.
+    # The 725-byte export has six single-pane windows: cli, cli2, opencode, codex, btop, log.
+    # All use /c/repo/docker-sandbox-testrepo. The directory and application state are not included.
+    # Normal resurrect process rules apply. Base64 preserves tabs and trailing fields during paste.
     base64 --decode > "$work_dir/resurrect-snapshot" <<'SBX_RESURRECT_SNAPSHOT'
 cGFuZQkwCTAJMAk6CTAJc2J4LW5ld25hbWV0ZXN0CTovYy9yZXBvL2RvY2tlci1zYW5kYm94LXRl
 c3RyZXBvCTEJYmFzaAk6CnBhbmUJMAkxCTAJOgkwCXNieC1uZXduYW1ldGVzdAk6L2MvcmVwby9k
@@ -1367,7 +1349,7 @@ BTOP_WRAPPER
 queue_helper "$tmux_wrapper" wrapper_contents
 queue_helper "$HOME/.local/bin/btop" btop_wrapper_contents
 
-# Emit Python literals rather than interpolating shell text into Python source.
+# Generate Python literals. Do not insert shell text directly into Python source.
 python_settings() {
     python3 - "$oauth_access" "$oauth_refresh" "$oauth_provider" "$oauth_base_url" \
         "$api_base_url" "$mcp_gateway_url" "$opencode_binary" "$codex_device_url" \
@@ -2212,8 +2194,8 @@ case $- in
 esac
 SBX_PATH_SETTINGS
 queue_managed_file /usr/local/lib/sbx-deploy/path.bash "$work_dir/path.bash" 644
-# One legacy migration section. Compare whole known blocks, then reject any
-# remaining managed labels or definitions; never infer an edited block's end.
+# Compare complete legacy blocks. Reject remaining managed labels or definitions.
+# Never guess where an edited block ends.
 cat > "$work_dir/migrate-shell.py" <<'SBX_MIGRATE_SHELL'
 from pathlib import Path
 import re
@@ -2335,8 +2317,8 @@ upgrade_opencode() (
             die "Cannot read OpenCode upgrade state: $state_file"
     fi
     before=$(sha256sum -- "$opencode_binary")
-    # A completed upgrade is remembered locally, avoiding network checks on an
-    # identical rerun. A changed binary or missing state triggers another check.
+    # Record successful upgrades locally to skip network checks on unchanged reruns.
+    # Check again if the binary changes or the record is missing.
     if [[ -f $state_file && $(< "$state_file") == "$before" ]]; then
         return 0
     fi
@@ -2345,8 +2327,7 @@ upgrade_opencode() (
     [[ -f $opencode_binary && -x $opencode_binary ]] ||
         die "OpenCode upgrade left no usable executable: $opencode_binary"
     after=$(sha256sum -- "$opencode_binary")
-    # Publish completion only after success. Interrupted/failed upgrades remain
-    # eligible for retry; the marker itself is replaced atomically.
+    # Record completion atomically after success. Retry interrupted or failed upgrades.
     staged=$(umask 077; mktemp -- "$state_file.tmp.XXXXXX")
     printf '%s\n' "$after" > "$staged"
     mv -fT -- "$staged" "$state_file"
@@ -2376,12 +2357,11 @@ case ${SBX_CRED_OPENAI_MODE:-none} in
     oauth) host_oauth=true ;;
     *) : ;; # The credential stage reports this once, with recovery actions.
 esac
-# GitHub mode can lag host updates. The live check below determines whether
-# GitHub access works instead of warning based only on the mode variable.
+# GitHub mode can lag host updates. Check live access before warning.
 if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
-    # Only the kit's masked bridge record may be imported. Exported credentials
-    # stay in memory: never put real local tokens in logs, temp files or backups.
-    # Use the kit's lock so its startup import cannot race this reconciliation.
+    # Import only the kit's masked bridge record. Keep exported credentials in memory.
+    # Never put real local tokens in logs, temporary files, or backups.
+    # Use the kit's lock to prevent concurrent startup imports.
     python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" <<'SBX_PROXY_OAUTH'
 import fcntl
 import json
@@ -2481,8 +2461,8 @@ if exists "$opencode_config"; then
     [[ -f $opencode_config && -r $opencode_config && ! -L $opencode_config ]] ||
         die "OpenCode configuration must be a readable regular file, not a symlink: $opencode_config"
 fi
-# Mask JSONC comments/trailing commas without shifting character offsets, then
-# replace only managed model/gateway settings. Other text and comments survive.
+# Mask JSONC comments and trailing commas without changing character offsets.
+# Replace only managed model and gateway settings. Preserve other text and comments.
 python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
@@ -2525,8 +2505,8 @@ except ValueError as error:
 if not isinstance(data, dict):
     sys.exit(f"OpenCode configuration must contain an object: {source}")
 
-# Walk only managed object paths, including duplicate keys, preserving other
-# agent/MCP settings and custom entries. Never replace an unexpected non-object.
+# Visit only managed object paths, including duplicate keys. Preserve other settings.
+# Stop if a managed object has an unexpected type.
 decoder = json.JSONDecoder()
 edits = []
 newline = '\r\n' if '\r\n' in original else '\n'
@@ -2675,9 +2655,8 @@ if host_oauth == 'true':
     if config.get('model_provider') != provider_id:
         config['model_provider'] = provider_id
         changed = True
-# No auth.json is created or copied. The provider bears only the shared Docker
-# sentinel; the proxy handles real tokens and refresh on the host. Local login
-# helpers switch back to the built-in provider after successful explicit login.
+# Do not create or copy auth.json. The provider contains only the shared Docker placeholder.
+# The host proxy manages real tokens and refresh. Successful local login restores the built-in provider.
 if changed or not source.exists():
     staged.write_text(tomlkit.dumps(config), encoding='utf-8')
 SBX_CODEX_MODEL
@@ -2701,11 +2680,10 @@ else
     stage_done unchanged 'Shared models, provider and MCP gateway match'
 fi
 
-# Read-only credential probes. Successful results are cached by local setup,
-# without storing credential values; fingerprints contain hashes only. Host secrets can
-# change invisibly, so SBX_CHECK_AUTH=1 explicitly rechecks a cached success.
-# Failures are never cached. Probe output stays private and is not copied to the
-# installer log: diagnostics below contain only statuses and known commands.
+# Read-only probes cache successes by local setup. Store hashes, never credential values.
+# Host secrets can change without detection. SBX_CHECK_AUTH=1 repeats cached checks.
+# Never cache failures. Keep probe output private and out of installer logs.
+# Report only statuses and known commands.
 case ${SBX_CHECK_AUTH:-0} in
     0|1) ;;
     *) die 'SBX_CHECK_AUTH must be 0 or 1.' ;;
@@ -2719,8 +2697,8 @@ check_credential() {
     fi
     binary=$(type -P gh || :)
     codex_binary=$(PATH="$HOME/.local/bin:$PATH" type -P codex || :)
-    # Include routing, modes, binaries and managed configs. Token variables, if
-    # present, are fed directly into the hash and are never printed or stored.
+    # Hash routing, modes, binaries, and managed configuration.
+    # Hash token variables directly. Never print or store their values.
     fingerprint=$({
         printf '%s\0' 'sbx-auth-check-v1' "$service" \
             "${SBX_CRED_OPENAI_MODE:-none}" "${SBX_CRED_GITHUB_MODE:-none}" \
@@ -2756,8 +2734,8 @@ check_credential() {
         stage_done attention 'Host OAuth needs setup; see final actions'
         return 0
     else
-        # Use the same authenticated model-list route as Codex. This does not
-        # generate text, consume an agent task, or prove inference permissions.
+        # Use Codex's authenticated model-list route. This generates no text or agent task.
+        # It does not verify inference permissions.
         output=$(timeout --kill-after="${kill_seconds}s" "${version_seconds}s" env PATH="$HOME/.local/bin:$PATH" codex --version)
         if [[ $output =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             output=${BASH_REMATCH[1]}
@@ -2813,7 +2791,7 @@ webtop_image=lscr.io/linuxserver/webtop:ubuntu-xfce
 webtop_id=
 webtop_docker_available=false
 if command -v docker >/dev/null 2>&1; then
-    # Read local state before prompting; never start/reconfigure Docker here.
+    # Read local state before prompting. Do not start or configure Docker here.
     if docker info >/dev/null 2> "$work_dir/webtop-docker.stderr"; then
         webtop_docker_available=true
         webtop_id=$(docker container ls -a --filter 'name=^/webtop$' --format '{{.ID}}')
@@ -2821,8 +2799,8 @@ if command -v docker >/dev/null 2>&1; then
 fi
 if [[ -n $webtop_id ]]; then
     docker inspect "$webtop_id" > "$work_dir/webtop-container.json"
-    # Preserve existing containers and volumes. Refuse a conflicting name rather
-    # than deleting/recreating it, including partially created user deployments.
+    # Preserve existing containers and volumes, including incomplete user deployments.
+    # Stop if the name conflicts.
     webtop_status=$(python3 - "$work_dir/webtop-container.json" "$webtop_image" <<'SBX_WEBTOP_INSPECT'
 import json
 from pathlib import Path
@@ -2847,8 +2825,8 @@ SBX_WEBTOP_INSPECT
     )
 fi
 if [[ -z $webtop_id ]]; then
-    # Descriptor 6 holds the caller's stdin, not the literal installer heredoc.
-    # A pasted run must never read its payload (or later shell commands) as answers.
+    # Descriptor 6 holds the caller's stdin. It excludes the literal installer heredoc.
+    # Never read pasted payloads or pending shell commands as answers.
     stop_spinner
     drain_output
     prompt_fd=
@@ -2906,8 +2884,8 @@ fi
 )
 SBX_DEPLOY_PAYLOAD
 )
-# Keep the installer unguarded: an if/&& around it would disable errexit inside.
-# This enclosing brace is parsed before execution, preserving pasted input.
+# Do not guard the installer with if or &&. That disables errexit inside.
+# Bash parses the outer brace before execution to protect pasted input.
 case $? in
     0)
         if [[ $- == *i* && ${BASH_SOURCE[0]:-} != "$0" ]]; then

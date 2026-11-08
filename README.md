@@ -1,12 +1,13 @@
-# SBX Deploy — Debian/Ubuntu tools, tmux, and agent setup
+# SBX Deploy: Debian/Ubuntu sandbox setup
 
-`sbx_deploy.sh` installs the Debian/Ubuntu sandbox tools, supplied tmux
-configuration, TPM, tmux-resurrect, UTF-8 tmux wrapper, and Bash aliases.
+`sbx_deploy.sh` installs sandbox tools, tmux, TPM, tmux-resurrect, UTF-8 wrappers,
+and Bash aliases. It configures OpenCode and Codex for host credentials and the MCP gateway.
 
-This script is designed with the authors preference of code harness and authenticated provider,  however by forking this project and loading it with your own AI harness at it, you can tune the environment for your own needs, 
+To use other harnesses or providers, fork this project. Ask your coding agent to
+update the installer and authentication instructions for your requirements.
 
-For example you could prompt it with: 'Update this project for my choice of harnesses, Claude and Pi, and my choice of API and SCM, Anthropic API token authentication and Gitlab. Help me troubleshoot the authentication layer, and document the results appropriately respecting the original project format and layout.'  
+## Run
 
-# Execution
-
-As the default sandbox user, paste the **entire script** into the sbx sandboxes bash and press Enter - the script will provide more instructions, review the output after it completes for host setup and verification instructions.
+As the default sandbox user, paste the **entire script** into sandbox Bash.
+Press Enter. Follow the prompts. Read the final output for host setup and verification steps.
+See [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for host commands and troubleshooting.
