@@ -15,7 +15,6 @@
 # Roadmap features
 
 - desktop
-- docker escape testing
 - context7 MCP (via gateway)
 - tighten; clear the vibe coded slop
 - release/public
