@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Features, in execution order (keep current):
+# Serialize deployment under /run; preserve edited helpers using private baselines.
+# Stage shell loaders together, reject intervening edits, and bound unattended work.
 # 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
 # 2. Show the unchanged SBX artwork with terminal-aware green/grey accents.
 #    Require terminal confirmation of the hostname before deployment (default No).
 # 3. Align stage/result/details columns; show APT names and retain five private logs.
+#    Show the log path before stages and again at exit.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Install missing Codex CLI with labeled, bounded download/install/version steps;
 #    download missing TPM/tmux-resurrect atomically.
@@ -11,6 +14,7 @@
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
 #    Seed the bundled resurrect snapshot only without user saves; restore manually.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
+#    keeping new user helpers owned by the caller even in root-owned directories.
 #    including auth_all and individual OpenCode/Codex/GitHub auth with clipboard copying.
 #    Codex device login opens the browser with a manual URL fallback.
 #    Auth helpers are explicit sandbox-local overrides; --force repeats local login.
@@ -46,16 +50,37 @@ if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]];
     sbx_child_shell=true
 fi
 sbx_save_and_run() {
-    local payload target="$HOME/sbx_deploy.sh" staged= backup= candidate compare_status mode
+    local payload target="$HOME/sbx_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
     IFS= read -r -d '' payload || :
+    command -v flock >/dev/null 2>&1 || {
+        printf 'SBX Deploy: flock is required (install util-linux first).\n' >&2
+        exit 1
+    }
+    local deploy_lock=/run/sbx-deploy.lock
+    local -a lock_root=()
+    (( EUID == 0 )) || lock_root=(sudo -n)
+    # /run is root-owned. Create without clobbering; never follow a planted link.
+    "${lock_root[@]}" sh -c '
+        if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+            (umask 022; set -C; : > "$1")
+        fi
+        test -f "$1" && test ! -L "$1" && test "$(stat -c %u "$1")" = 0
+    ' sbx-deploy-lock "$deploy_lock" || { printf 'SBX Deploy: cannot prepare root-owned /run/sbx-deploy.lock.\n' >&2; exit 1; }
+    exec 9<"$deploy_lock"
+    if ! flock -n 9; then
+        printf 'SBX Deploy: another deployment or local Codex configuration update is running; retry after it finishes.\n' >&2
+        exit 1
+    fi
     if [[ -L $target || ( -e $target && ! -f $target ) ]]; then
         printf 'SBX Deploy: cannot save installer over a symlink or non-regular file: %s\n' "$target" >&2
         exit 1
     fi
-    staged=$(umask 077; mktemp -- "$target.tmp.XXXXXX")
-    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi; if [[ -n $original ]]; then rm -f -- "$original"; fi' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
+    original=$(umask 077; mktemp -- "$target.input.XXXXXX")
+    if [[ -f $target ]]; then cp -p -- "$target" "$original"; was_present=true; fi
+    staged=$(umask 077; mktemp -- "$target.tmp.XXXXXX")
     # Recreate this wrapper around the literal payload. declare -f gives the
     # saved copy the same save-first behavior without relying on shell history,
     # a source filename, or an exported variable from the calling shell.
@@ -63,6 +88,8 @@ sbx_save_and_run() {
         # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
+# Lock deployment before saving; atomically update recognized helpers and loaders.
+# Preserve edited files, reject intervening changes, and bound unattended commands.
 # Install sandbox tools, tmux configuration and an initial resurrect snapshot,
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
@@ -143,23 +170,55 @@ SBX_CALLER_REFRESH
     fi
     if [[ -n $staged ]]; then
         chmod u+x -- "$staged"
-        mv -fT -- "$staged" "$target"
+        if "$was_present"; then
+            [[ ! -L $target ]] && cmp -s -- "$target" "$original" || {
+                printf 'SBX Deploy: saved installer changed concurrently: %s\n' "$target" >&2; exit 1;
+            }
+            mv -fT -- "$staged" "$target"
+        else
+            ln -T -- "$staged" "$target"
+            rm -f -- "$staged"
+        fi
         staged=
     fi
-    trap - EXIT INT TERM
+    rm -f -- "$original"
+    original=
+    # Keep signal traps while the foreground payload runs, retaining the lock
+    # through child cleanup even when this wrapper receives an interrupt.
     # Execute only the literal installer payload, avoiding recursive execution
     # of the saved wrapper. The payload keeps its own isolated subshell/traps.
-    eval "$payload" <&6 6<&-
+    # Only this parent holds the deployment lock. All installer descendants,
+    # including detached tmux/logging workers, start with its descriptor closed.
+    (exec 9>&-; eval "$payload" <&6 6<&-)
+    trap - EXIT INT TERM
 }
 sbx_save_and_run <<'SBX_DEPLOY_PAYLOAD'
 (
 set -euo pipefail
 
+# Shared values precede every generated helper; installed helpers embed a snapshot.
+main_model=gpt-6.1-sol
+subagent_model=gpt-6-luna
+oauth_access=oai-oat01-proxy-managed
+oauth_refresh=oai-ort01-proxy-managed
+oauth_provider=sbx-chatgpt
+oauth_base_url=https://chatgpt.com/backend-api/codex
+api_base_url=https://api.openai.com/v1
+mcp_gateway_url=http://mcp-gateway.docker.internal/mcp
+opencode_binary=/home/agent/.opencode/bin/opencode
+codex_install_url=https://chatgpt.com/codex/install.sh
+codex_device_url=https://auth.openai.com/codex/device
+download_seconds=60
+install_seconds=300
+credential_seconds=30
+version_seconds=15
+kill_seconds=5
+
 # Keep terminal presentation independent from captured command output.
 exec 3>&1 4>&2
 verbose=${SBX_VERBOSE:-0}
 animated=false
-green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green=
+green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_grey=
 utf8=false
 spinner_frames=('|' '/' '-' '\')
 locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
@@ -173,6 +232,7 @@ if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
         green=$'\033[32m' amber=$'\033[33m' red=$'\033[31m'
         muted=$'\033[90m' reset=$'\033[0m'
         bold_amber=$'\033[1;93m' bold_red=$'\033[1;91m'
+        banner_grey=$'\033[38;5;245m'
         banner_white=$'\033[1;37m'
         banner_bright_green=$'\033[1;92m'
     fi
@@ -184,22 +244,29 @@ while IFS= read -r line; do
     case $banner_line in
         2)
             label='N i T R O N   P R E S E N T S'
-            line=${line/"$label"/"$banner_bright_green$label$muted"}
+            line=${line/"$label"/"$banner_bright_green$label$banner_grey"}
             ;;
-        4|5|6|7|8)
-            line="${line:0:6}$green${line:6:31}$muted${line:37}"
+        7)
+            # Em dashes can count as bytes in a non-UTF-8 locale. Anchor the
+            # color boundary to the X rather than slicing through this row.
+            logo_tail='  /  \  \'
+            line="${line:0:6}$green${line:6}"
+            line=${line/"$logo_tail"/"$logo_tail$banner_grey"}
+            ;;
+        4|5|6|8)
+            line="${line:0:6}$green${line:6:31}$banner_grey${line:37}"
             if (( banner_line == 6 )); then
                 label='.:: S B X   D E P L O Y ::.'
-                accent="$green.:: $banner_white"'S B X   D E P L O Y'"$green ::.$muted"
+                accent="$green.:: $banner_white"'S B X   D E P L O Y'"$green ::.$banner_grey"
                 line=${line/"$label"/"$accent"}
             fi
             ;;
         9)
-            label="Nitron's Deployment Script for SBX v-0.1a"
-            line=${line/"$label"/"$green$label$muted"}
+            label="Nitron's Deployment Script for SBX v0.1a"
+            line=${line/"$label"/"$green$label$banner_grey"}
             ;;
     esac
-    printf '%s%s%s\n' "$muted" "$line" "$reset" >&3
+    printf '%s%s%s\n' "$banner_grey" "$line" "$reset" >&3
     banner_line=$((banner_line + 1))
 done <<'SBX_BANNER'
 
@@ -247,8 +314,6 @@ while :; do
 done
 [[ $confirmation_fd != 7 ]] || exec 7<&-
 printf '\n' >&3
-
-printf 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_deploy.sh\n\n'
 
 conf=/etc/tmux.conf
 plugin_dir="$HOME/.tmux/plugins"
@@ -540,6 +605,8 @@ finish_installer() {
         reason="${operation:-Setup} failed (exit $status)"
         [[ ! -s $work_dir/reason ]] || reason=$(< "$work_dir/reason")
         case $status in
+            124) reason="${operation:-Setup} exceeded its unattended deadline (exit 124)" ;;
+            137) reason="${operation:-Setup} was forcibly terminated (exit 137)" ;;
             130|143) reason="Interrupted during ${stage:-setup}" ;;
         esac
         # Snapshot only the failed operation, before cleanup adds more output.
@@ -576,18 +643,31 @@ finish_installer() {
         summary_end
     fi
     if (( warning_count )); then
-        summary_begin "ATTENTION ($warning_count issues)" "$amber"
+        heading='ACTION NEEDED'
+        if (( warning_count > 1 )); then heading="ACTION NEEDED - $warning_count issues"; fi
+        summary_begin "$heading" "$amber"
         for ((i=0; i<${#issue_keys[@]}; i++)); do
-            (( i == 0 )) || summary_text ''
-            summary_text "${issue_titles[i]}: ${issue_details[i]}"
+            summary_text ''
+            heading=${issue_titles[i]}
+            if (( warning_count > 1 )); then heading="$((i + 1)). $heading"; fi
+            summary_text "$heading" "$amber"
+            summary_text "${issue_details[i]}"
             while IFS= read -r action; do
                 if [[ $action == '  '* ]]; then
-                    summary_text "$action" '' literal
+                    # Keep commands intact, without prose wrapping or box padding
+                    # becoming part of a command that exceeds the box width.
+                    summary_command "${action#  }"
                 elif [[ -n $action ]]; then
-                    summary_text "$action"
+                    summary_text ''
+                    if [[ $action == *: ]]; then
+                        summary_text "$action" "$amber"
+                    else
+                        summary_text "$action" "$muted"
+                    fi
                 fi
             done <<< "${issue_actions[i]}"
         done
+        summary_text ''
         summary_end
     fi
     if (( status == 0 )); then
@@ -656,6 +736,9 @@ finish_installer() {
 trap finish_installer EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+report_line 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_deploy.sh'
+report_line "Log: $log_file"
+report_line ''
 report_row Stage Result Details "$muted"
 printf '\n  -------------------+---------+------------------------------------------\n' >&3
 capture_output
@@ -775,10 +858,11 @@ install_codex() {
         if exists "$HOME/.local/bin/codex"; then
             die "Existing Codex path is unusable; repair it before retrying: $HOME/.local/bin/codex"
         fi
-        stage_operation 'Downloading Codex installer (60s limit)'
+        stage_operation "Downloading Codex installer (${download_seconds}s limit)"
         # Download completely before executing; never run a partial response.
-        if curl -fsSL --connect-timeout 10 --max-time 60 \
-            -o "$work_dir/codex-install.sh" https://chatgpt.com/codex/install.sh; then
+        if timeout --kill-after="${kill_seconds}s" "${download_seconds}s" \
+            curl -fsSL --connect-timeout 10 --max-time "$download_seconds" \
+            -o "$work_dir/codex-install.sh" "$codex_install_url"; then
             :
         else
             status=$?
@@ -788,7 +872,7 @@ install_codex() {
         # Noninteractive mode avoids a launch prompt; keep pasted input away
         # from the installer. timeout also bounds its child download processes.
         # Upstream stages releases before publishing; interruption is retryable.
-        if timeout --kill-after=5s 300s env CODEX_NON_INTERACTIVE=1 \
+        if timeout --kill-after="${kill_seconds}s" "${install_seconds}s" env CODEX_NON_INTERACTIVE=1 \
             CODEX_INSTALL_DIR="$HOME/.local/bin" sh "$work_dir/codex-install.sh" </dev/null; then
             :
         else
@@ -802,9 +886,9 @@ install_codex() {
         [[ -f $binary && -x $binary ]] || die 'Codex installation left no usable executable.'
         touch -- "$work_dir/changed"
     fi
-    stage_operation 'Checking Codex version (15s limit)'
+    stage_operation "Checking Codex version (${version_seconds}s limit)"
     printf 'Codex executable: %s\n' "$binary"
-    if timeout --kill-after=5s 15s "$binary" --version </dev/null; then
+    if timeout --kill-after="${kill_seconds}s" "${version_seconds}s" "$binary" --version </dev/null; then
         :
     else
         status=$?
@@ -829,7 +913,7 @@ clone_plugin() (
     staging_dir=$(mktemp -d -- "$plugin_dir/.plugin-stage.XXXXXX")
     trap 'rm -rf -- "$staging_dir"' EXIT
     # Same-filesystem publication; never merge into or replace an existing path.
-    git clone --depth 1 "https://github.com/tmux-plugins/$repository" "$staging_dir/checkout"
+    timeout --kill-after="${kill_seconds}s" "${install_seconds}s" git clone --depth 1 "https://github.com/tmux-plugins/$repository" "$staging_dir/checkout"
     mv -nT -- "$staging_dir/checkout" "$destination"
     # mv -n can succeed without publishing if another run created the target.
     if [[ ! -e $staging_dir/checkout ]]; then
@@ -852,11 +936,41 @@ else
     stage_done unchanged 'Already installed'
 fi
 
+# Snapshot before editing, then compare immediately before publication. This
+# detects intervening edits; arbitrary external editors do not take our lock.
+snapshot_file() {
+    local target=$1 original=$2 present=$3
+    if exists "$target"; then
+        [[ -f $target && ! -L $target ]] || die "Unsafe configuration path: $target"
+        run_as_root cat -- "$target" > "$original"
+        printf True > "$present"
+    else
+        : > "$original"
+        printf False > "$present"
+    fi
+}
+assert_input() {
+    local target=$1 original=$2 present=$3
+    if [[ $(< "$present") == True ]]; then
+        [[ -f $target && ! -L $target ]] && run_as_root cmp -s -- "$target" "$original" ||
+            die "Configuration changed during deployment: $target; review it and retry."
+    else
+        ! exists "$target" || die "Configuration appeared during deployment: $target; review it and retry."
+    fi
+}
+
 # Shared atomic replacement for system configuration. A matching file is a no-op;
-# changed files get a metadata-preserving backup before the rename. Symlinks may
-# match, but are never replaced. Reuse an identical backup after an interrupted run.
+# changed files get a metadata-preserving backup before the rename. Symlinks
+# are rejected. Reuse an identical backup after an interrupted run.
 replace_system_file() (
     local source=$1 target=$2 mode=${3-} staged= backup compare_status
+    local original=${4:-} present=${5:-} snapshot=
+    if [[ -z $original ]]; then
+        snapshot=$(mktemp -d -- "$work_dir/input.XXXXXX")
+        original="$snapshot/input" present="$snapshot/exists"
+        snapshot_file "$target" "$original" "$present"
+    fi
+    assert_input "$target" "$original" "$present"
     trap 'if [[ -n "$staged" ]]; then run_as_root rm -f -- "$staged"; fi' EXIT
     if exists "$target"; then
         [[ -f "$target" ]] || die "Not a regular file: $target"
@@ -869,13 +983,20 @@ replace_system_file() (
         [[ ! -L "$target" ]] || die "Configuration differs; update its symlink target: $target"
     fi
 
+    # Elevate staging as well as publication: an interrupted older run may
+    # have left root-owned helper directories inside HOME. Keep their ownership.
     staged=$(run_as_root mktemp -- "$target.tmp.XXXXXX")
     if exists "$target"; then
         run_as_root cp -p -- "$target" "$staged"
+    elif [[ $target == "$HOME/"* ]]; then
+        # New user files belong to the caller even when root creates the stage.
+        run_as_root chown "$(id -u):$(id -g)" -- "$staged"
     fi
     run_as_root tee "$staged" < "$source" >/dev/null
     if [[ -n "$mode" ]]; then
         run_as_root chmod "$mode" -- "$staged"
+    elif [[ $(< "$present") == False && $target != "$HOME/"* ]]; then
+        run_as_root chmod 644 -- "$staged"
     fi
 
     if exists "$target"; then
@@ -900,10 +1021,100 @@ replace_system_file() (
         fi
         touch -- "$work_dir/backup"
     fi
-    run_as_root mv -fT -- "$staged" "$target"
+    assert_input "$target" "$original" "$present"
+    if [[ $(< "$present") == True ]]; then
+        run_as_root mv -fT -- "$staged" "$target"
+    else
+        run_as_root ln -T -- "$staged" "$target"
+        run_as_root rm -f -- "$staged"
+    fi
     staged=
     touch -- "$work_dir/changed"
 )
+
+# One content-based ownership policy for every generated helper. Baselines are
+# private deployment state, recorded only after successful file publication.
+managed_conflict() {
+    die "Managed file differs: $1. Preserve/rename it, or restore the baseline in $log_dir/managed after reviewing your edits, then rerun. No force overwrite is available."
+}
+legacy_managed_digest() {
+    case "$1:$2" in
+        tmux:4e5cdc439742a730df166fd7d41c858a8b3cb9f6a15f2ac6de7222851a5c0b7a) return 0 ;;
+        btop:a1ff64e6c696f59d1e01c71287229fdb297aadfba7e0bea1ba7ef998f88a15f3) return 0 ;;
+        sbx_check_credentials:333d4ece17931876ed9897cd1dfac2e7369e85274a1595855c22767d47b407f0) return 0 ;;
+        sbx_check_mcp:c4495b3399eb27eaac14456f651db94b28746bd318bcb1789dbdc6b68a48ada6) return 0 ;;
+        desktop:ada75803a1f16eb59055b164a2c67950804d0443a6ad9b0783e117c343b0286c) return 0 ;;
+        xclip:269c1c506653650990fa365875c855962f394527ddf9e90ffdad7307f98ca57d) return 0 ;;
+        sbx-local-syslog:6da86d19e5cd8f6ae96443998d520964c9c04499e1456175430b5497d2834d9a) return 0 ;;
+        00-sbx-local-format.conf:795fcba8de73a2d8e2f98868348919ec3a8cc3cd66b22702498192b3129d2a52) return 0 ;;
+        auth-openai-tty:6cc6524d12186c9cc7e4a64ac8827eaf313acd3af607b51eaf20b44b34b6f7a2) return 0 ;;
+        auth-codex-openai-browser-tty:0f4374cf7633b86966ae1161215876a50fda1b57e0181ff328a6ee261808fab0) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+managed_preflight() {
+    local target=$1 desired=$2 mode=${3:-} baseline digest key
+    if exists "$log_dir/managed"; then
+        [[ -d $log_dir/managed && ! -L $log_dir/managed && -O $log_dir/managed ]] || managed_conflict "$log_dir/managed"
+    fi
+    key=$(printf '%s' "$target" | sha256sum); key=${key%% *}
+    baseline="$log_dir/managed/$key"
+    if exists "$baseline"; then
+        [[ -f $baseline && ! -L $baseline && -O $baseline ]] || managed_conflict "$baseline"
+    fi
+    if exists "$target"; then
+        [[ -f $target && ! -L $target ]] || managed_conflict "$target"
+        if [[ $mode == 755 && ! -x $target ]]; then
+            die "Managed helper is not executable: $target; review its permissions and restore execute permission, then retry."
+        fi
+        if run_as_root cmp -s -- "$target" "$desired"; then return 0; fi
+        if [[ -f $baseline ]] && run_as_root cmp -s -- "$target" "$baseline"; then return 0; fi
+        [[ ! -f $baseline ]] || managed_conflict "$target"
+        digest=$(run_as_root sha256sum -- "$target"); digest=${digest%% *}
+        legacy_managed_digest "${target##*/}" "$digest" || managed_conflict "$target"
+    fi
+}
+install_managed_file() (
+    local target=$1 desired=$2 mode=${3:-755} baseline key staged=
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    local input_dir
+    input_dir=$(mktemp -d -- "$work_dir/managed-input.XXXXXX")
+    snapshot_file "$target" "$input_dir/input" "$input_dir/exists"
+    managed_preflight "$target" "$desired" "$mode"
+    # Create user helper directories without sudo when the nearest existing
+    # ancestor is writable. Older root-owned directories use elevated staging.
+    local parent=${target%/*} ancestor=${target%/*}
+    while ! exists "$ancestor"; do
+        ancestor=${ancestor%/*}
+        ancestor=${ancestor:-/}
+    done
+    if [[ $target == "$HOME/"* && -d $ancestor && -w $ancestor ]]; then
+        mkdir -p -- "$parent"
+    else
+        run_as_root mkdir -p -- "$parent"
+    fi
+    replace_system_file "$desired" "$target" "$mode" "$input_dir/input" "$input_dir/exists"
+    key=$(printf '%s' "$target" | sha256sum); key=${key%% *}
+    baseline="$log_dir/managed/$key"
+    if [[ -f $baseline ]] && cmp -s -- "$baseline" "$desired"; then return 0; fi
+    [[ ! -L $log_dir/managed ]] || managed_conflict "$log_dir/managed"
+    (umask 077; mkdir -p -m 700 -- "$log_dir/managed")
+    staged=$(umask 077; mktemp -- "$baseline.tmp.XXXXXX")
+    cat -- "$desired" > "$staged"
+    mv -fT -- "$staged" "$baseline"
+    staged=
+)
+# Queue the shell group: all ownership and migration checks finish before writes.
+managed_targets=() managed_sources=() managed_modes=()
+queue_managed_file() {
+    managed_targets+=("$1") managed_sources+=("$2") managed_modes+=("${3:-755}")
+}
+queue_helper() {
+    local target=$1 contents=$2 desired
+    desired="$work_dir/helper-${#managed_targets[@]}"
+    "$contents" > "$desired"
+    queue_managed_file "$target" "$desired"
+}
 
 # Sandbox-local syslog with facility.severity tags; preserve routing/rotation rules.
 # Start on the first Bash session after restart; earlier boot messages may be missed.
@@ -911,12 +1122,6 @@ replace_system_file() (
 stage_begin 'Local syslog' 'Checking logging and restart hook'
 [[ -f /etc/logrotate.conf && -f /etc/logrotate.d/rsyslog ]] ||
     die 'Missing distro logrotate configuration; restore the logrotate/rsyslog package files.'
-for syslog_file in /etc/rsyslog.d/00-sbx-local-format.conf /usr/local/sbin/sbx-local-syslog; do
-    if exists "$syslog_file"; then
-        run_as_root grep -q '^# SBX Deploy: local syslog\|^# SBX Deploy: local rsyslog' "$syslog_file" ||
-            die "Existing logging file is not managed by SBX Deploy: $syslog_file"
-    fi
-done
 cat > "$work_dir/rsyslog-format.conf" <<'SBX_SYSLOG_FORMAT'
 # SBX Deploy: local syslog format; retain the existing routing and permissions.
 # Explicit templates in user rules still take precedence.
@@ -924,7 +1129,7 @@ template(name="SBXLocalFormat" type="string"
     string="%timegenerated:::date-rfc3339% %hostname% %syslogfacility-text%.%syslogseverity-text% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n")
 $ActionFileDefaultTemplate SBXLocalFormat
 SBX_SYSLOG_FORMAT
-replace_system_file "$work_dir/rsyslog-format.conf" /etc/rsyslog.d/00-sbx-local-format.conf 644
+managed_preflight /etc/rsyslog.d/00-sbx-local-format.conf "$work_dir/rsyslog-format.conf"
 cat > "$work_dir/sbx-local-syslog.sh" <<'SBX_SYSLOG_START'
 #!/bin/bash
 # SBX Deploy: local rsyslog and rotation without systemd or cron.
@@ -987,45 +1192,10 @@ if flock -n 8; then
 fi
 SBX_SYSLOG_START
 [[ -d /usr/local/sbin ]] || run_as_root install -d -m 755 /usr/local/sbin
-replace_system_file "$work_dir/sbx-local-syslog.sh" /usr/local/sbin/sbx-local-syslog 755
-# Preserve existing persistent shell settings; publish the complete append once.
-syslog_shell=/etc/sandbox-persistent.sh
-syslog_shell_ready=false
-if exists "$syslog_shell"; then
-    [[ -f $syslog_shell && -r $syslog_shell ]] || die "Cannot read: $syslog_shell"
-    if grep -Fxq '# SBX Deploy: start sandbox logging on Bash startup' "$syslog_shell"; then
-        syslog_shell_ready=true
-    fi
-fi
-if ! "$syslog_shell_ready"; then
-    : > "$work_dir/syslog-shell"
-    if exists "$syslog_shell"; then
-        cat -- "$syslog_shell" > "$work_dir/syslog-shell"
-    fi
-    cat >> "$work_dir/syslog-shell" <<'SBX_SYSLOG_SHELL'
-
-# SBX Deploy: start sandbox logging on Bash startup
-# Clear BASH_ENV for the helper to avoid recursively sourcing this file.
-if [ -x /usr/local/sbin/sbx-local-syslog ]; then
-    if ! /usr/bin/sudo -n /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog >/dev/null; then
-        printf 'SBX logging startup failed; run: sudo env -u BASH_ENV bash /usr/local/sbin/sbx-local-syslog\n' >&2
-    fi
-fi
-SBX_SYSLOG_SHELL
-    if exists "$syslog_shell"; then
-        replace_system_file "$work_dir/syslog-shell" "$syslog_shell"
-    else
-        replace_system_file "$work_dir/syslog-shell" "$syslog_shell" 644
-    fi
-fi
-stage_operation 'Ensuring rsyslog and rotation are running'
-run_as_root /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog > "$work_dir/syslog-start"
-cat -- "$work_dir/syslog-start"
-if [[ -e $work_dir/changed || -s $work_dir/syslog-start ]]; then
-    stage_done changed 'Local syslog; Bash startup; hourly rotation checks'
-else
-    stage_done unchanged 'Logging and rotation already configured and running'
-fi
+managed_preflight /usr/local/sbin/sbx-local-syslog "$work_dir/sbx-local-syslog.sh" 755
+queue_managed_file /etc/rsyslog.d/00-sbx-local-format.conf "$work_dir/rsyslog-format.conf" 644
+queue_managed_file /usr/local/sbin/sbx-local-syslog "$work_dir/sbx-local-syslog.sh"
+stage_done verified 'Logging ownership checked; publish with shell setup'
 
 stage_begin 'tmux configuration' 'Checking supplied configuration'
 # Keep the supplied tmux configuration verbatim. Its quoted heredoc defers HOME
@@ -1194,30 +1364,27 @@ LC_ALL=C.UTF-8 exec /usr/bin/btop "$@"
 BTOP_WRAPPER
 }
 
-# Never replace an existing wrapper. A hard link publishes the complete executable
-# atomically and fails if another process creates the destination first.
-ensure_wrapper() (
-    local target=$1 contents=$2 staged=
-    trap 'if [[ -n "$staged" ]]; then rm -f -- "$staged"; fi' EXIT
-    if exists "$target"; then
-        [[ -f "$target" && -x "$target" ]] &&
-            cmp -s -- "$target" <("$contents") ||
-            die "Existing wrapper differs or is unusable: $target"
-    else
-        mkdir -p -- "${target%/*}"
-        staged=$(mktemp -- "$target.tmp.XXXXXX")
-        "$contents" > "$staged"
-        chmod 755 -- "$staged"
-        ln -T -- "$staged" "$target"
-        touch -- "$work_dir/changed"
-    fi
-)
-ensure_wrapper "$tmux_wrapper" wrapper_contents
-ensure_wrapper "$HOME/.local/bin/btop" btop_wrapper_contents
+queue_helper "$tmux_wrapper" wrapper_contents
+queue_helper "$HOME/.local/bin/btop" btop_wrapper_contents
+
+# Emit Python literals rather than interpolating shell text into Python source.
+python_settings() {
+    python3 - "$oauth_access" "$oauth_refresh" "$oauth_provider" "$oauth_base_url" \
+        "$api_base_url" "$mcp_gateway_url" "$opencode_binary" "$codex_device_url" \
+        "$deploy_lock" "$credential_seconds" "$version_seconds" "$kill_seconds" <<'SBX_PYTHON_VALUES'
+import sys
+names = ('oauth_access', 'oauth_refresh', 'oauth_provider', 'oauth_base_url',
+         'api_base_url', 'mcp_gateway_url', 'opencode_binary', 'codex_device_url',
+         'deploy_lock', 'credential_seconds', 'version_seconds', 'kill_seconds')
+for index, (name, value) in enumerate(zip(names, sys.argv[1:])):
+    print(f'{name} = {int(value) if index >= 9 else repr(value)}')
+SBX_PYTHON_VALUES
+}
 
 credential_check_contents() {
+    printf '#!/usr/bin/env python3\n'
+    python_settings
     cat <<'SBX_CREDENTIAL_CHECK'
-#!/usr/bin/env python3
 """Read-only live credential checks; never print tokens or command diagnostics."""
 import json
 import os
@@ -1248,13 +1415,15 @@ def note(text, style='dim'):
     for line in textwrap.wrap(text, width=width - 2):
         print('  ' + paint(line, style))
 
-sentinel = 'oai-oat01-proxy-managed'
-base = 'https://chatgpt.com/backend-api/codex'
+sentinel = oauth_access
+base = oauth_base_url
 
 def run(args, payload=None):
     # Capture all output in memory; stderr can contain credentials.
-    return subprocess.run(args, input=payload, text=True, capture_output=True,
-                          timeout=30, env={**os.environ, 'GH_DEBUG': '',
+    seconds = version_seconds if '--version' in args else credential_seconds
+    return subprocess.run(['timeout', f'--kill-after={kill_seconds}s', f'{seconds}s', *args],
+                          input=payload, text=True, capture_output=True,
+                          env={**os.environ, 'GH_DEBUG': '',
                           'GH_PROMPT_DISABLED': '1', 'GH_NO_UPDATE_NOTIFIER': '1'})
 
 def report(name, mode, ok, detail):
@@ -1268,13 +1437,13 @@ def report(name, mode, ok, detail):
     status = paint(f'{"PASS" if ok else "CHECK":5}', 'green' if ok else 'amber')
     row = f'  {name:10} {status}  {source:12}'
     if width >= 66:
-        if ok:
-            row += '  ' + ('Account access' if name == 'GitHub' else 'Model access')
+        access = ('Account access' if name == 'GitHub' else 'Model access') if ok else detail
+        row += '  ' + (access if ok else paint(access, 'amber'))
         print(row)
     else:
         print(f'  {name:10} {status}  {source}')
-    if not ok:
-        note(detail, 'amber')
+        if not ok:
+            note(detail, 'amber')
     sys.stdout.flush()
 
 def read_json(path):
@@ -1325,7 +1494,7 @@ def check_codex():
     if not match:
         report('Codex', 'unknown', False, 'cannot determine CLI version')
         return
-    if provider == 'sbx-chatgpt':
+    if provider == oauth_provider:
         record = config.get('model_providers', {}).get(provider, {})
         if record.get('experimental_bearer_token') != sentinel or record.get('base_url') != base:
             report('Codex', 'unknown', False, 'managed provider differs')
@@ -1337,7 +1506,7 @@ def check_codex():
         token = os.environ.get('OPENAI_API_KEY') or auth.get('OPENAI_API_KEY')
         account = None
         if token:
-            mode, url = 'API key (local/env)', 'https://api.openai.com/v1/models'
+            mode, url = 'API key (local/env)', api_base_url + '/models'
         else:
             mode, token, url = 'local login', tokens.get('access_token'), base + '/models'
             account = tokens.get('account_id')
@@ -1348,7 +1517,7 @@ def check_codex():
     report('Codex', mode, ok, detail)
 
 def check_opencode():
-    binary = shutil.which('opencode') or str(home / '.opencode/bin/opencode')
+    binary = shutil.which('opencode') or opencode_binary
     result = run([binary, 'auth', 'export', '--standalone'])
     if result.returncode:
         report('OpenCode', 'unknown', False, 'credential inventory unavailable')
@@ -1369,7 +1538,7 @@ def check_opencode():
             return
         ok, detail = probe(token, base + '/models', version[1])
     else:
-        ok, detail = probe(token, 'https://api.openai.com/v1/models')
+        ok, detail = probe(token, api_base_url + '/models')
     report('OpenCode', mode, ok, detail)
 
 print('\n  ' + paint('CREDENTIAL CHECK', 'bold'))
@@ -1402,11 +1571,12 @@ sys.exit(1 if failed else 0)
 SBX_CREDENTIAL_CHECK
 }
 credential_check_contents > "$work_dir/sbx_check_credentials"
-replace_system_file "$work_dir/sbx_check_credentials" "$HOME/.local/bin/sbx_check_credentials" 755
+queue_managed_file "$HOME/.local/bin/sbx_check_credentials" "$work_dir/sbx_check_credentials"
 
 mcp_check_contents() {
+    printf '#!/usr/bin/env python3\n'
+    python_settings
     cat <<'SBX_MCP_CHECK'
-#!/usr/bin/env python3
 """Discover brokered MCP tools without executing tools or changing attachments."""
 import http.client
 import json
@@ -1438,13 +1608,13 @@ def note(text, style='dim'):
 def check_mcp():
     # Query only the shared managed endpoint. Never invoke upstream tools,
     # authorization helpers, or dynamic attachment/configuration tools.
-    endpoint = 'http://mcp-gateway.docker.internal/mcp'
+    endpoint = mcp_gateway_url
     # The gateway alias can be routed by the SBX HTTP proxy. Honor the same
     # proxy/NO_PROXY environment as clients instead of forcing direct DNS.
     opener = urllib.request.build_opener()
     headers = {'Content-Type': 'application/json',
                'Accept': 'application/json, text/event-stream'}
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + credential_seconds
     sequence = 0
     phase = 'initialize'
 
@@ -1601,7 +1771,7 @@ sys.exit(0 if check_mcp() else 1)
 SBX_MCP_CHECK
 }
 mcp_check_contents > "$work_dir/sbx_check_mcp"
-replace_system_file "$work_dir/sbx_check_mcp" "$HOME/.local/bin/sbx_check_mcp" 755
+queue_managed_file "$HOME/.local/bin/sbx_check_mcp" "$work_dir/sbx_check_mcp"
 
 desktop_contents() {
     cat <<'SBX_DESKTOP'
@@ -1715,19 +1885,7 @@ summary_end
 report_line ''
 SBX_DESKTOP
 }
-desktop_contents > "$work_dir/desktop"
-if exists "$HOME/.local/bin/desktop"; then
-    # Migrate only the exact original helper or our current generated output.
-    # Preserve user edits; the shared replacement helper backs up changes once.
-    if ! cmp -s -- "$HOME/.local/bin/desktop" "$work_dir/desktop"; then
-        desktop_digest=$(sha256sum -- "$HOME/.local/bin/desktop")
-        [[ ${desktop_digest%% *} == ada75803a1f16eb59055b164a2c67950804d0443a6ad9b0783e117c343b0286c ]] ||
-            die 'Existing desktop helper differs; preserve or rename it before retrying.'
-    fi
-    replace_system_file "$work_dir/desktop" "$HOME/.local/bin/desktop" 755
-else
-    ensure_wrapper "$HOME/.local/bin/desktop" desktop_contents
-fi
+queue_helper "$HOME/.local/bin/desktop" desktop_contents
 
 # Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
 gh_clipboard_contents() {
@@ -1747,13 +1905,14 @@ encoded=$(base64 -w0)
 printf '\033]52;c;%s\007' "$encoded" > /dev/tty
 SBX_GH_CLIPBOARD
 }
-ensure_wrapper "$HOME/.local/lib/sbx-deploy/gh-clipboard/xclip" gh_clipboard_contents
+queue_helper "$HOME/.local/lib/sbx-deploy/gh-clipboard/xclip" gh_clipboard_contents
 
 # Keep auth output attached to a pseudoterminal so prompts stay interactive.
 # Forward output live without saving authentication output to installer logs.
 openai_auth_contents() {
+    printf '#!/usr/bin/env python3\n'
+    python_settings
     cat <<'SBX_OPENAI_AUTH'
-#!/usr/bin/env python3
 import os
 import errno
 import fcntl
@@ -1771,7 +1930,7 @@ SBX_OPENAI_AUTH
         printf '%s\n' "command = ['codex', '-c', 'model_provider=\"openai\"', '-c', 'forced_login_method=\"chatgpt\"', 'login', '--device-auth']"
     else
         cat <<'SBX_OPENAI_COMMAND'
-command = ['/home/agent/.opencode/bin/opencode', 'auth', 'login', 'openai',
+command = [opencode_binary, 'auth', 'login', 'openai',
            '--method', 'chatgpt-headless']
 SBX_OPENAI_COMMAND
     fi
@@ -1838,7 +1997,7 @@ SBX_OPENAI_AUTH
         cat <<'SBX_CODEX_BROWSER'
             # Open after copying the code, once per login. Honor BROWSER through
             # Python's browser selection; keep opener output out of the auth UI.
-            url = 'https://auth.openai.com/codex/device'
+            url = codex_device_url
             try:
                 subprocess.run(
                     [sys.executable, '-c',
@@ -1868,17 +2027,23 @@ if status == 0 and command[0] == 'codex':
     # Explicit local login overrides the managed provider only after success.
     # Installer reruns restore the host proxy default. Never edit auth.json.
     import tomlkit
+    lock_fd = os.open(deploy_lock, os.O_RDONLY | os.O_NOFOLLOW)
+    lock_result = subprocess.run(['flock', '--conflict-exit-code', '124', '--wait', str(credential_seconds), str(lock_fd)],
+                                 pass_fds=(lock_fd,))
+    if lock_result.returncode:
+        print('Local login succeeded, but configuration locking failed or timed out; retry auth_codex_openai --force later.', file=sys.stderr)
+        sys.exit(lock_result.returncode)
     config_dir = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
     config_file = config_dir / 'config.toml'
     if not config_dir.is_absolute() or config_file.is_symlink():
         sys.exit('Local login succeeded, but the Codex configuration path is unsafe.')
     if config_file.exists():
         try:
-            original = config_file.read_text()
+            original = config_file.read_bytes().decode('utf-8')
             config = tomlkit.parse(original)
         except (OSError, ValueError):
             sys.exit('Local login succeeded, but Codex configuration could not be read.')
-        if config.get('model_provider') == 'sbx-chatgpt':
+        if config.get('model_provider') == oauth_provider:
             config['model_provider'] = 'openai'
             if config.get('forced_login_method') == 'api':
                 del config['forced_login_method']
@@ -1889,6 +2054,8 @@ if status == 0 and command[0] == 'codex':
                     staged = Path(handle.name)
                     handle.write(tomlkit.dumps(config))
                 staged.chmod(config_file.stat().st_mode & 0o777)
+                if config_file.is_symlink() or config_file.read_bytes().decode('utf-8') != original:
+                    sys.exit('Codex configuration changed after login; preserve it and retry.')
                 os.replace(staged, config_file)
             finally:
                 if staged is not None:
@@ -1897,85 +2064,17 @@ sys.exit(status if status >= 0 else 128 - status)
 SBX_OPENAI_AUTH
 }
 # Use a new managed path so existing wrappers remain safe to migrate on rerun.
-ensure_wrapper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
+queue_helper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
 codex_auth_contents() { openai_auth_contents codex; }
-ensure_wrapper "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" codex_auth_contents
+queue_helper "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" codex_auth_contents
 
-ensure_bash_path() (
-    local startup_file=$1 staged= marker='# SBX Deploy: put the tmux wrapper on PATH'
-    trap 'if [[ -n "$staged" ]]; then rm -f -- "$staged"; fi' EXIT
-    if exists "$startup_file"; then
-        [[ -f "$startup_file" && -r "$startup_file" ]] || die "Cannot read: $startup_file"
-        grep -Fxq -- "$marker" "$startup_file" && return 0
-        [[ ! -L "$startup_file" ]] || die "Update the startup file symlink target: $startup_file"
-    fi
-    # Stage the entire append so interruption cannot leave a marker without its
-    # code. Preserve existing contents, permissions, and ownership when present.
-    staged=$(mktemp -- "$startup_file.tmp.XXXXXX")
-    if exists "$startup_file"; then
-        cp -p -- "$startup_file" "$staged"
-    fi
-    cat >> "$staged" <<'SBX_BASH_PATH'
-
-# SBX Deploy: put the tmux wrapper on PATH
-case $- in
-    *i*)
-        case ${PATH-} in
-            "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
-            *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
-        esac
-        ;;
-esac
-SBX_BASH_PATH
-    mv -fT -- "$staged" "$startup_file"
-    staged=
-    touch -- "$work_dir/changed"
-)
-ensure_bash_path "$HOME/.bashrc"
-# Bash login shells read only the first readable login startup file.
-login_file="$HOME/.profile"
-for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
-    if [[ -f "$candidate" && -r "$candidate" ]]; then
-        login_file=$candidate
-        break
-    fi
-done
-ensure_bash_path "$login_file"
-
-# Preserve all existing system aliases and add the managed block only once.
-global_bashrc=/etc/bash.bashrc
-[[ -f "$global_bashrc" && -r "$global_bashrc" ]] || die "Cannot read: $global_bashrc"
-# Reconcile only our exact aliases; retain unrelated aliases and user edits.
-python3 - "$global_bashrc" "$work_dir/connection-checks.bashrc" <<'SBX_CHECK_ALIASES'
-from pathlib import Path
-import re
-import sys
-
-source, staged = map(Path, sys.argv[1:])
-original = source.read_text()
-wanted = {
-    'check_credentials': 'alias check_credentials=\'"$HOME/.local/bin/sbx_check_credentials"\'',
-    'check_mcp': 'alias check_mcp=\'"$HOME/.local/bin/sbx_check_mcp"\'',
-}
-obsolete = {
-    'alias check_connections=\'"$HOME/.local/bin/sbx_check_connections"\'',
-    'alias auth_check=\'"$HOME/.local/bin/sbx-check-credentials"\'',
-}
-lines = original.splitlines(keepends=True)
-for name, desired in wanted.items():
-    if any(re.match(r'^\s*alias\s+' + name + '=', line)
-           and line.rstrip('\r\n') != desired for line in lines):
-        sys.exit(f'Existing {name} alias differs; preserve or rename it before retrying.')
-updated = ''.join(line for line in lines if line.rstrip('\r\n') not in obsolete)
-for desired in wanted.values():
-    if desired not in updated.splitlines():
-        updated += '\n' + desired + '\n'
-staged.write_text(updated)
-SBX_CHECK_ALIASES
-replace_system_file "$work_dir/connection-checks.bashrc" "$global_bashrc"
-if ! grep -Fxq -- '# SBX Deploy: custom system aliases' "$global_bashrc"; then
-    cat -- "$global_bashrc" > "$work_dir/bash.bashrc"
-    cat >> "$work_dir/bash.bashrc" <<'SBX_ALIASES'
+# Interactive definitions live in one owned file; startup files hold loaders.
+{
+    printf 'sbx_opencode_binary=%q\nsbx_credential_seconds=%q\nsbx_kill_seconds=%q\n' \
+        "$opencode_binary" "$credential_seconds" "$kill_seconds"
+    cat <<'SBX_SHELL_SETTINGS'
+alias check_credentials='"$HOME/.local/bin/sbx_check_credentials"'
+alias check_mcp='"$HOME/.local/bin/sbx_check_mcp"'
 
 # SBX Deploy: custom system aliases
 # Custom aliases for ansible control
@@ -1995,14 +2094,7 @@ alias configcat='grep -Ev "^$|^#"'
 # Netstat aliases
 alias netstat-numeric='netstat -tulpn'
 alias netstat-names='netstat -tulp'
-SBX_ALIASES
-    replace_system_file "$work_dir/bash.bashrc" "$global_bashrc"
-fi
 
-# A shell function clears tokens in the calling shell, so subsequent gh commands
-# use the saved browser login too. An executable could only clear its own env.
-# Host proxy injection still applies; a local helper cannot override host bindings.
-cat > "$work_dir/gh-login.block" <<'SBX_GH_LOGIN'
 # SBX Deploy: GitHub browser login
 auth_gh() {
     case $#:${1-} in
@@ -2010,7 +2102,7 @@ auth_gh() {
         *) printf 'Usage: auth_gh [--force]\n' >&2; return 2 ;;
     esac
     unset GH_TOKEN GITHUB_TOKEN || return
-    if [[ ${1-} != --force ]] && command gh auth status --active --hostname github.com >/dev/null 2>&1; then
+    if [[ ${1-} != --force ]] && command timeout --kill-after="${sbx_kill_seconds}s" "${sbx_credential_seconds}s" gh auth status --active --hostname github.com >/dev/null 2>&1; then
         printf 'GitHub: already authenticated; skipping login.\n'
         return 0
     fi
@@ -2019,175 +2111,44 @@ auth_gh() {
         PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \
         gh auth login --hostname github.com --git-protocol https --web --clipboard
 }
-SBX_GH_LOGIN
-# Migrate known login helpers in place; preserve other aliases and functions.
-python3 - "$global_bashrc" "$work_dir/gh-login.block" "$work_dir/gh-login.bashrc" <<'SBX_GH_HELPER'
-from pathlib import Path
-import sys
 
-source, block, staged = map(Path, sys.argv[1:])
-original = source.read_text()
-desired = block.read_text()
-openai_command = '/home/agent/.opencode/bin/opencode auth login openai --method chatgpt-headless'
-for old_name in ('openai_login', 'login_openai'):
-    old_alias = f"alias {old_name}='{openai_command}'"
-    original = ''.join(line for line in original.splitlines(keepends=True)
-                       if line.rstrip('\r\n') != old_alias)
-old_alias = f"alias auth_openai='{openai_command}'"
-original = ''.join(line for line in original.splitlines(keepends=True)
-                   if line.rstrip('\r\n') != old_alias)
-old_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai"\''
-original = ''.join(line for line in original.splitlines(keepends=True)
-                   if line.rstrip('\r\n') != old_alias)
-old_alias = 'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai-tty"\''
-original = ''.join(line for line in original.splitlines(keepends=True)
-                   if line.rstrip('\r\n') != old_alias)
-openai_helper = '''auth_opencode_openai() {
-    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" "$@"
-}
-'''
-previous_openai_helper = openai_helper
-openai_helper = '''auth_opencode_openai() {
+# SBX Deploy: OpenAI device-code login
+auth_opencode_openai() {
     local auth_status
     case $#:${1-} in
         0:|1:--force) ;;
-        *) printf 'Usage: auth_opencode_openai [--force]\\n' >&2; return 2 ;;
+        *) printf 'Usage: auth_opencode_openai [--force]\n' >&2; return 2 ;;
     esac
     # auth list reports stored providers, including refreshable OAuth sessions.
-    if [[ ${1-} != --force ]] &&
-       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&
+    if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&
+       auth_status=$(timeout --kill-after="${sbx_kill_seconds}s" "${sbx_credential_seconds}s" "$sbx_opencode_binary" auth list 2>/dev/null) &&
        printf '%s' "$auth_status" | python3 -c '
 import re
 import sys
-text = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())
-sys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)
+text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())
+sys.exit(0 if re.search(r"\bOpenAI[ \t]+(?:\(?(?:oauth|api)\b|OpenAI[ \t]+stored\b)", text, re.I) else 1)
 '; then
-        printf 'OpenCode OpenAI: saved credentials found; skipping login.\\n'
+        printf 'OpenCode OpenAI: saved credentials found; skipping login.\n'
         return 0
     fi
     "$HOME/.local/lib/sbx-deploy/auth-openai-tty"
 }
-'''
-original = original.replace(previous_openai_helper, openai_helper, 1)
-# Migrate the exact previous status parser, preserving any user-edited helper.
-previous_status_helper = openai_helper.replace(
-    r'\bOpenAI[ \t]+(?:\(?(?:oauth|api)\b|OpenAI[ \t]+stored\b)',
-    r'\bOpenAI\s+\(?(?:oauth|api)\b')
-original = original.replace(previous_status_helper, openai_helper, 1)
-# A managed placeholder is not a sandbox-local login. Calling this helper is
-# an explicit override, so do not let the host credential short-circuit it.
-previous_openai_helper = openai_helper
-openai_helper = openai_helper.replace(
-    'if [[ ${1-} != --force ]] &&',
-    'if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&')
-original = original.replace(previous_openai_helper, openai_helper, 1)
-if openai_helper not in original:
-    if 'auth_opencode_openai() {' in original:
-        sys.exit('Existing OpenCode auth helper differs; cannot update automatically.')
-    original += '\n# SBX Deploy: OpenAI device-code login\n' + openai_helper
-codex_helper = '''# SBX Deploy: Codex OpenAI device-code login
-auth_codex_openai() {
-    command env PATH="$HOME/.local/bin:$PATH" \\
-        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" "$@"
-}
-'''
-# Migrate only the exact previous managed helper, preserving user edits.
-previous_codex_helper = codex_helper.replace('auth-codex-openai-browser-tty',
-                                            'auth-codex-openai-tty')
-original = original.replace(previous_codex_helper, codex_helper, 1)
-previous_codex_helper = codex_helper
-codex_helper = '''# SBX Deploy: Codex OpenAI device-code login
+
+# SBX Deploy: Codex OpenAI device-code login
 auth_codex_openai() {
     case $#:${1-} in
         0:|1:--force) ;;
-        *) printf 'Usage: auth_codex_openai [--force]\\n' >&2; return 2 ;;
+        *) printf 'Usage: auth_codex_openai [--force]\n' >&2; return 2 ;;
     esac
-    if [[ ${1-} != --force ]] &&
-       command env PATH="$HOME/.local/bin:$PATH" codex login status >/dev/null 2>&1; then
-        printf 'Codex: already authenticated; skipping login.\\n'
+    if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&
+       command timeout --kill-after="${sbx_kill_seconds}s" "${sbx_credential_seconds}s" env PATH="$HOME/.local/bin:$PATH" codex login status >/dev/null 2>&1; then
+        printf 'Codex: already authenticated; skipping login.\n'
         return 0
     fi
-    command env PATH="$HOME/.local/bin:$PATH" \\
+    command env PATH="$HOME/.local/bin:$PATH" \
         "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty"
 }
-'''
-previous_status_codex_helper = codex_helper
-codex_helper = codex_helper.replace(
-    'if [[ ${1-} != --force ]] &&',
-    'if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&')
-original = original.replace(previous_status_codex_helper, codex_helper, 1)
-original = original.replace(previous_codex_helper, codex_helper, 1)
-if codex_helper not in original:
-    if 'auth_codex_openai' in original:
-        sys.exit('Existing Codex auth helper differs; cannot update automatically.')
-    original += '\n' + codex_helper
-previous_all = '''auth_all() {
-    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return
-    auth_gh
-}
-'''
-desired_all = '''auth_all() {
-    case $#:${1-} in
-        0:|1:--force) ;;
-        *) printf 'Usage: auth_all [--force]\\n' >&2; return 2 ;;
-    esac
-    auth_opencode_openai "$@" || return
-    auth_codex_openai "$@" || return
-    auth_gh "$@"
-}
-'''
-original = original.replace(previous_all, desired_all, 1)
-previous_all = '''auth_all() {
-    auth_opencode_openai || return
-    auth_codex_openai || return
-    auth_gh
-}
-'''
-original = original.replace(previous_all, desired_all, 1)
-previous_all = '''auth_all() {
-    auth_opencode_openai || return
-    auth_gh
-}
-'''
-original = original.replace(previous_all, desired_all, 1)
-if '# SBX Deploy: authenticate all agents' in original and desired_all not in original:
-    sys.exit('Existing SBX auth_all helper was edited; cannot update automatically.')
-previous = '''# SBX Deploy: GitHub browser login
-login_gh() {
-    unset GH_TOKEN GITHUB_TOKEN || return
-    command gh auth login --hostname github.com --git-protocol https --web
-}
-'''
-previous_clipboard = '''# SBX Deploy: GitHub browser login
-auth_gh() {
-    unset GH_TOKEN GITHUB_TOKEN || return
-    # Scope the adapter and X11 backend selection to this gh process.
-    command env -u WAYLAND_DISPLAY \\
-        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\
-        gh auth login --hostname github.com --git-protocol https --web --clipboard
-}
-'''
-original = original.replace(previous_clipboard, desired, 1)
-original = original.replace(previous_clipboard.replace('auth_gh() {', 'login_gh() {'), desired, 1)
-if desired in original:
-    updated = original
-elif desired.replace('auth_gh() {', 'login_gh() {') in original:
-    updated = original.replace(desired.replace('auth_gh() {', 'login_gh() {'), desired, 1)
-elif previous in original:
-    updated = original.replace(previous, desired, 1)
-elif '# SBX Deploy: GitHub browser login' in original:
-    sys.exit('Existing SBX GitHub auth helper was edited; cannot update automatically.')
-else:
-    updated = original + '\n' + desired
-staged.write_text(updated)
-SBX_GH_HELPER
-replace_system_file "$work_dir/gh-login.bashrc" "$global_bashrc"
 
-# Run helpers in sequence; auth_gh also clears inherited tokens in this shell.
-# Stop if either OpenAI login fails or is cancelled.
-if ! grep -Fxq -- '# SBX Deploy: authenticate all agents' "$global_bashrc"; then
-    cat -- "$global_bashrc" > "$work_dir/auth-all.bashrc"
-    cat >> "$work_dir/auth-all.bashrc" <<'SBX_AUTH_ALL'
 
 # SBX Deploy: authenticate all agents
 auth_all() {
@@ -2199,20 +2160,7 @@ auth_all() {
     auth_codex_openai "$@" || return
     auth_gh "$@"
 }
-SBX_AUTH_ALL
-    replace_system_file "$work_dir/auth-all.bashrc" "$global_bashrc"
-fi
 
-if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Updated wrappers, PATH, or aliases'
-else
-    stage_done unchanged 'Wrappers, PATH, and aliases match'
-fi
-
-stage_begin 'Custom prompts' 'Checking global Bash prompts'
-if ! grep -Fxq -- '# SBX Deploy: custom system prompts' "$global_bashrc"; then
-    cat -- "$global_bashrc" > "$work_dir/bash-prompts.bashrc"
-    cat >> "$work_dir/bash-prompts.bashrc" <<'SBX_PROMPTS'
 
 # SBX Deploy: custom system prompts
 case $- in
@@ -2250,17 +2198,133 @@ case $- in
         unset -f _sbx_register_prompt
         ;;
 esac
-SBX_PROMPTS
-    replace_system_file "$work_dir/bash-prompts.bashrc" "$global_bashrc"
-fi
-if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Installed root and global prompts'
+SBX_SHELL_SETTINGS
+} > "$work_dir/shell.bash"
+queue_managed_file /usr/local/lib/sbx-deploy/shell.bash "$work_dir/shell.bash" 644
+cat > "$work_dir/path.bash" <<'SBX_PATH_SETTINGS'
+case $- in
+    *i*)
+        case ${PATH-} in
+            "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
+            *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
+        esac
+        ;;
+esac
+SBX_PATH_SETTINGS
+queue_managed_file /usr/local/lib/sbx-deploy/path.bash "$work_dir/path.bash" 644
+# One legacy migration section. Compare whole known blocks, then reject any
+# remaining managed labels or definitions; never infer an edited block's end.
+cat > "$work_dir/migrate-shell.py" <<'SBX_MIGRATE_SHELL'
+from pathlib import Path
+import re
+import sys
+
+source, staged, kind = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+if source.is_symlink() or (source.exists() and not source.is_file()):
+    sys.exit(f'Unsafe startup file: {source}')
+existed = source.exists()
+original = source.read_bytes().decode('utf-8') if existed else ''
+Path(str(staged) + '.input').write_text(original)
+Path(str(staged) + '.exists').write_text(str(existed))
+legacy = [
+    '\n# SBX Deploy: custom system prompts\ncase $- in\n    *i*)\n        # Abbreviate every parent to its first character; keep the last name.\n        # Bash string operations preserve spaces/globs and avoid external tools.\n        short_path() {\n            local path=${PWD#/} component result=\n            while [[ $path == */* ]]; do\n                component=${path%%/*}\n                path=${path#*/}\n                [[ -z $component ]] || result+="/${component:0:1}"\n            done\n            printf \'%s/%s\' "$result" "$path"\n        }\n        _sbx_prompt() {\n            local status=$?\n            if (( EUID == 0 )); then\n                PS1=\'${debian_chroot:+($debian_chroot)}\\[\\033[01;31m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]$(short_path)\\[\\033[00m\\]\\$ \'\n            else\n                PS1=\'${debian_chroot:+($debian_chroot)}\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]$(short_path)\\[\\033[00m\\]\\$ \'\n            fi\n            return "$status"\n        }\n        # Personal .bashrc defaults run after /etc/bash.bashrc. Set PS1 just\n        # before display, preserving existing command hooks and their status.\n        _sbx_register_prompt() {\n            local command\n            for command in "${PROMPT_COMMAND[@]}"; do\n                [[ $command != _sbx_prompt ]] || return 0\n            done\n            PROMPT_COMMAND=("${PROMPT_COMMAND[@]}" _sbx_prompt)\n        }\n        _sbx_register_prompt\n        unset -f _sbx_register_prompt\n        ;;\nesac\n',
+    '# SBX Deploy: OpenAI device-code login\nauth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    'auth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    '# SBX Deploy: OpenAI device-code login\nauth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    '# SBX Deploy: OpenAI device-code login\nauth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI\\s+\\(?(?:oauth|api)\\b", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    'auth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI[ \\t]+(?:\\(?(?:oauth|api)\\b|OpenAI[ \\t]+stored\\b)", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    'auth_opencode_openai() {\n    local auth_status\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_opencode_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    # auth list reports stored providers, including refreshable OAuth sessions.\n    if [[ ${1-} != --force ]] &&\n       auth_status=$(/home/agent/.opencode/bin/opencode auth list 2>/dev/null) &&\n       printf \'%s\' "$auth_status" | python3 -c \'\nimport re\nimport sys\ntext = re.sub(r"\\x1b\\[[0-?]*[ -/]*[@-~]", "", sys.stdin.read())\nsys.exit(0 if re.search(r"\\bOpenAI\\s+\\(?(?:oauth|api)\\b", text, re.I) else 1)\n\'; then\n        printf \'OpenCode OpenAI: saved credentials found; skipping login.\\n\'\n        return 0\n    fi\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty"\n}\n',
+    '# SBX Deploy: GitHub browser login\nlogin_gh() {\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_gh [--force]\\n\' >&2; return 2 ;;\n    esac\n    unset GH_TOKEN GITHUB_TOKEN || return\n    if [[ ${1-} != --force ]] && command gh auth status --active --hostname github.com >/dev/null 2>&1; then\n        printf \'GitHub: already authenticated; skipping login.\\n\'\n        return 0\n    fi\n    # Scope the adapter and X11 backend selection to this gh process.\n    command env -u WAYLAND_DISPLAY \\\n        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\\n        gh auth login --hostname github.com --git-protocol https --web --clipboard\n}\n',
+    '# SBX Deploy: GitHub browser login\nauth_gh() {\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_gh [--force]\\n\' >&2; return 2 ;;\n    esac\n    unset GH_TOKEN GITHUB_TOKEN || return\n    if [[ ${1-} != --force ]] && command gh auth status --active --hostname github.com >/dev/null 2>&1; then\n        printf \'GitHub: already authenticated; skipping login.\\n\'\n        return 0\n    fi\n    # Scope the adapter and X11 backend selection to this gh process.\n    command env -u WAYLAND_DISPLAY \\\n        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\\n        gh auth login --hostname github.com --git-protocol https --web --clipboard\n}\n',
+    '\n# SBX Deploy: custom system aliases\n# Custom aliases for ansible control\nalias playbook=\'ansible-playbook\'\nalias playtest=\'ansible-playbook -C\'\nalias playsyntax=\'ansible-playbook --syntax-check\'\n\n# List active permissions on a file or folder\nalias lperms=\'stat -c "%a %n"\'\n\n# Make a password hash\nalias makepass=\'python3 -c "from passlib.hash import sha512_crypt; import getpass; print(sha512_crypt.using(rounds=5000).hash(getpass.getpass()))"\'\n\n# Strip comments and blank lines from a configuration file\nalias configcat=\'grep -Ev "^$|^#"\'\n\n# Netstat aliases\nalias netstat-numeric=\'netstat -tulpn\'\nalias netstat-names=\'netstat -tulp\'\n',
+    '# SBX Deploy: Codex OpenAI device-code login\nauth_codex_openai() {\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_codex_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    if [[ ${1-} != --force && ${SBX_CRED_OPENAI_MODE:-none} != oauth ]] &&\n       command env PATH="$HOME/.local/bin:$PATH" codex login status >/dev/null 2>&1; then\n        printf \'Codex: already authenticated; skipping login.\\n\'\n        return 0\n    fi\n    command env PATH="$HOME/.local/bin:$PATH" \\\n        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty"\n}\n',
+    '# SBX Deploy: Codex OpenAI device-code login\nauth_codex_openai() {\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_codex_openai [--force]\\n\' >&2; return 2 ;;\n    esac\n    if [[ ${1-} != --force ]] &&\n       command env PATH="$HOME/.local/bin:$PATH" codex login status >/dev/null 2>&1; then\n        printf \'Codex: already authenticated; skipping login.\\n\'\n        return 0\n    fi\n    command env PATH="$HOME/.local/bin:$PATH" \\\n        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty"\n}\n',
+    '# SBX Deploy: GitHub browser login\nlogin_gh() {\n    unset GH_TOKEN GITHUB_TOKEN || return\n    # Scope the adapter and X11 backend selection to this gh process.\n    command env -u WAYLAND_DISPLAY \\\n        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\\n        gh auth login --hostname github.com --git-protocol https --web --clipboard\n}\n',
+    '# SBX Deploy: GitHub browser login\nauth_gh() {\n    unset GH_TOKEN GITHUB_TOKEN || return\n    # Scope the adapter and X11 backend selection to this gh process.\n    command env -u WAYLAND_DISPLAY \\\n        PATH="$HOME/.local/lib/sbx-deploy/gh-clipboard:$PATH" \\\n        gh auth login --hostname github.com --git-protocol https --web --clipboard\n}\n',
+    '\n# SBX Deploy: authenticate all agents\nauth_all() {\n    case $#:${1-} in\n        0:|1:--force) ;;\n        *) printf \'Usage: auth_all [--force]\\n\' >&2; return 2 ;;\n    esac\n    auth_opencode_openai "$@" || return\n    auth_codex_openai "$@" || return\n    auth_gh "$@"\n}\n',
+    '# SBX Deploy: Codex OpenAI device-code login\nauth_codex_openai() {\n    command env PATH="$HOME/.local/bin:$PATH" \\\n        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" "$@"\n}\n',
+    '# SBX Deploy: Codex OpenAI device-code login\nauth_codex_openai() {\n    command env PATH="$HOME/.local/bin:$PATH" \\\n        "$HOME/.local/lib/sbx-deploy/auth-codex-openai-tty" "$@"\n}\n',
+    '# SBX Deploy: GitHub browser login\nlogin_gh() {\n    unset GH_TOKEN GITHUB_TOKEN || return\n    command gh auth login --hostname github.com --git-protocol https --web\n}\n',
+    '# SBX Deploy: authenticate all agents\nauth_all() {\n    auth_opencode_openai || return\n    auth_codex_openai || return\n    auth_gh\n}\n',
+    '# SBX Deploy: authenticate all agents\nauth_all() {\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return\n    auth_gh\n}\n',
+    '# SBX Deploy: OpenAI device-code login\nauth_opencode_openai() {\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" "$@"\n}\n',
+    "alias login_openai='/home/agent/.opencode/bin/opencode auth login openai --method chatgpt-headless'\n",
+    "alias openai_login='/home/agent/.opencode/bin/opencode auth login openai --method chatgpt-headless'\n",
+    '# SBX Deploy: authenticate all agents\nauth_all() {\n    auth_opencode_openai || return\n    auth_gh\n}\n',
+    "alias auth_openai='/home/agent/.opencode/bin/opencode auth login openai --method chatgpt-headless'\n",
+    'auth_all() {\n    auth_opencode_openai || return\n    auth_codex_openai || return\n    auth_gh\n}\n',
+    'auth_all() {\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" || return\n    auth_gh\n}\n',
+    'auth_opencode_openai() {\n    "$HOME/.local/lib/sbx-deploy/auth-openai-tty" "$@"\n}\n',
+    'alias check_connections=\'"$HOME/.local/bin/sbx_check_connections"\'\n',
+    'alias check_credentials=\'"$HOME/.local/bin/sbx_check_credentials"\'\n',
+    'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai-tty"\'\n',
+    'alias auth_openai=\'"$HOME/.local/lib/sbx-deploy/auth-openai"\'\n',
+    'auth_all() {\n    auth_opencode_openai || return\n    auth_gh\n}\n',
+    'alias auth_check=\'"$HOME/.local/bin/sbx-check-credentials"\'\n',
+    'alias check_mcp=\'"$HOME/.local/bin/sbx_check_mcp"\'\n',
+]
+path_block = '# SBX Deploy: put the tmux wrapper on PATH\ncase $- in\n    *i*)\n        case ${PATH-} in\n            "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;\n            *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;\n        esac\n        ;;\nesac\n'
+syslog_block = "# SBX Deploy: start sandbox logging on Bash startup\n# Clear BASH_ENV for the helper to avoid recursively sourcing this file.\nif [ -x /usr/local/sbin/sbx-local-syslog ]; then\n    if ! /usr/bin/sudo -n /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog >/dev/null; then\n        printf 'SBX logging startup failed; run: sudo env -u BASH_ENV bash /usr/local/sbin/sbx-local-syslog\\n' >&2\n    fi\nfi\n"
+loaders = {
+    'global': '# SBX Deploy: interactive shell loader\ncase $- in *i*) source /usr/local/lib/sbx-deploy/shell.bash ;; esac\n',
+    'path': '# SBX Deploy: PATH loader\nsource /usr/local/lib/sbx-deploy/path.bash\n',
+    'syslog': syslog_block,
+}
+updated = original
+for block in ([loaders[kind]] + (legacy if kind == 'global' else [path_block] if kind == 'path' else [])):
+    # Duplicates are ambiguous, even if each copy looks familiar.
+    if updated.count(block) > 1:
+        sys.exit(f'Duplicate managed startup block: {source}; preserve/repair it before retrying.')
+    updated = updated.replace(block, '', 1)
+if '# SBX Deploy:' in updated or (kind == 'global' and re.search(
+        r'(?m)^\s*(?:(?:auth_(?:gh|all|opencode_openai|codex_openai)|login_gh|short_path|_sbx_prompt)\s*\(\)|alias\s+(?:check_credentials|check_mcp|auth_openai|openai_login|login_openai|check_connections|auth_check)=)', updated)):
+    sys.exit(f'Edited or partial managed startup block: {source}; preserve/repair it before retrying.')
+# Keep unrelated text byte-for-byte. A matching loader is already in its final
+# position; avoid removing/reappending it, which would accumulate blank lines.
+if loaders[kind] in original and updated == original.replace(loaders[kind], '', 1):
+    result = original
+else:
+    result = updated + ('' if not updated or updated.endswith('\n') else '\n') + loaders[kind]
+staged.write_text(result)
+SBX_MIGRATE_SHELL
+startup_targets=() startup_sources=()
+stage_startup() {
+    local target=$1 kind=$2 staged="$work_dir/startup-${#startup_targets[@]}"
+    python3 "$work_dir/migrate-shell.py" "$target" "$staged" "$kind"
+    startup_targets+=("$target") startup_sources+=("$staged")
+}
+global_bashrc=/etc/bash.bashrc
+[[ -f $global_bashrc && -r $global_bashrc ]] || die "Cannot read: $global_bashrc"
+stage_startup "$global_bashrc" global
+stage_startup "$HOME/.bashrc" path
+login_file="$HOME/.profile"
+for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
+    if [[ -f $candidate && -r $candidate ]]; then login_file=$candidate; break; fi
+done
+stage_startup "$login_file" path
+stage_startup /etc/sandbox-persistent.sh syslog
+for ((i=0; i<${#managed_targets[@]}; i++)); do
+    managed_preflight "${managed_targets[i]}" "${managed_sources[i]}" "${managed_modes[i]}"
+done
+for ((i=0; i<${#startup_targets[@]}; i++)); do
+    assert_input "${startup_targets[i]}" "${startup_sources[i]}.input" "${startup_sources[i]}.exists"
+done
+for ((i=0; i<${#managed_targets[@]}; i++)); do
+    install_managed_file "${managed_targets[i]}" "${managed_sources[i]}" "${managed_modes[i]}"
+done
+for ((i=0; i<${#startup_targets[@]}; i++)); do
+    replace_system_file "${startup_sources[i]}" "${startup_targets[i]}" '' "${startup_sources[i]}.input" "${startup_sources[i]}.exists"
+done
+stage_operation 'Ensuring rsyslog and rotation are running'
+run_as_root /usr/bin/env -u BASH_ENV /bin/bash /usr/local/sbin/sbx-local-syslog > "$work_dir/syslog-start"
+cat -- "$work_dir/syslog-start"
+if [[ -e $work_dir/changed || -s $work_dir/syslog-start ]]; then
+    stage_done changed 'Updated managed helpers and shell loaders'
 else
-    stage_done unchanged 'Prompts already installed'
+    stage_done unchanged 'Helpers and shell loaders match'
 fi
 
-stage_begin 'OpenCode' 'Checking or upgrading existing installation'
-opencode_binary=/home/agent/.opencode/bin/opencode
+stage_begin 'OpenCode' 'Checking upgrade'
 upgrade_opencode() (
     local state_file="$log_dir/opencode-upgrade.sha256" before after staged=
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
@@ -2276,7 +2340,8 @@ upgrade_opencode() (
     if [[ -f $state_file && $(< "$state_file") == "$before" ]]; then
         return 0
     fi
-    "$opencode_binary" upgrade --method curl
+    # Unattended upgrades must not wait for input from the calling terminal.
+    timeout --kill-after="${kill_seconds}s" "${install_seconds}s" "$opencode_binary" upgrade --method curl </dev/null
     [[ -f $opencode_binary && -x $opencode_binary ]] ||
         die "OpenCode upgrade left no usable executable: $opencode_binary"
     after=$(sha256sum -- "$opencode_binary")
@@ -2305,11 +2370,6 @@ else
 fi
 
 # Shared deployment defaults; each harness translates these to its own schema.
-oauth_access=oai-oat01-proxy-managed
-oauth_refresh=oai-ort01-proxy-managed
-oauth_provider=sbx-chatgpt
-oauth_base_url=https://chatgpt.com/backend-api/codex
-mcp_gateway_url=http://mcp-gateway.docker.internal/mcp
 host_oauth=false
 stage_begin 'Host credentials' 'Checking proxy-managed OpenAI configuration'
 case ${SBX_CRED_OPENAI_MODE:-none} in
@@ -2322,7 +2382,7 @@ if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
     # Only the kit's masked bridge record may be imported. Exported credentials
     # stay in memory: never put real local tokens in logs, temp files or backups.
     # Use the kit's lock so its startup import cannot race this reconciliation.
-    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" <<'SBX_PROXY_OAUTH'
+    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" <<'SBX_PROXY_OAUTH'
 import fcntl
 import json
 import math
@@ -2331,7 +2391,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-binary, access, refresh, changed = sys.argv[1:]
+binary, access, refresh, changed = sys.argv[1:5]
+credential_seconds, kill_seconds = map(int, sys.argv[5:])
 data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
 if not data_home.is_absolute():
     sys.exit('OpenCode data directory must be absolute.')
@@ -2346,7 +2407,8 @@ except OSError:
     sys.exit('Cannot open the OpenCode credential synchronization lock.')
 
 def run(*args, payload=None):
-    result = subprocess.run([binary, 'auth', *args, '--standalone'],
+    result = subprocess.run(['timeout', f'--kill-after={kill_seconds}s', f'{credential_seconds}s',
+                             binary, 'auth', *args, '--standalone'],
                             input=payload, text=True, capture_output=True)
     if result.returncode:
         # Auth command diagnostics may contain secrets. Keep only its exit code.
@@ -2355,7 +2417,11 @@ def run(*args, payload=None):
     return result.stdout
 
 with os.fdopen(lock_fd, 'w') as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    result = subprocess.run(['flock', '--conflict-exit-code', '124', '--wait', str(credential_seconds), str(lock.fileno())],
+                            pass_fds=(lock.fileno(),), capture_output=True)
+    if result.returncode:
+        print('Credential synchronization lock timed out; retry after the other import finishes.', file=sys.stderr)
+        sys.exit(result.returncode)
     try:
         bridge = json.loads(source.read_text())
         record = bridge['openai']
@@ -2403,8 +2469,6 @@ else
     stage_done unchanged 'Host setup needed; local credentials preserved'
 fi
 
-main_model=gpt-6.1-sol
-subagent_model=gpt-6-luna
 stage_begin 'OpenCode defaults' 'Checking shared models and MCP gateway'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 [[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
@@ -2438,11 +2502,15 @@ desired = {
         "explore": {"model": subagent_model},
     },
 }
-if source.exists():
+existed = source.exists()
+if existed:
     with source.open(encoding="utf-8", newline="") as handle:
         original = handle.read()
 else:
     original = '{\n  "$schema": "https://opencode.ai/config.json"\n}\n'
+
+Path(str(staged) + '.input').write_bytes(original.encode('utf-8') if existed else b'')
+Path(str(staged) + '.exists').write_text(str(existed))
 
 # Match strings first so comment markers inside strings remain untouched.
 tokens = r'"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/'
@@ -2513,7 +2581,7 @@ install_opencode_model() (
     local staged=
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
     if exists "$opencode_config"; then
-        replace_system_file "$work_dir/opencode-model.json" "$opencode_config"
+        replace_system_file "$work_dir/opencode-model.json" "$opencode_config" '' "$work_dir/opencode-model.json.input" "$work_dir/opencode-model.json.exists"
     else
         mkdir -p -- "$opencode_config_dir"
         staged=$(umask 077; mktemp -- "$opencode_config.tmp.XXXXXX")
@@ -2549,7 +2617,10 @@ source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
 host_oauth, provider_id, base_url, access = sys.argv[5:9]
 gateway_url = sys.argv[9]
-original = source.read_text(encoding='utf-8') if source.exists() else ''
+existed = source.exists()
+original = source.read_bytes().decode('utf-8') if existed else ''
+Path(str(staged) + '.input').write_text(original, encoding='utf-8')
+Path(str(staged) + '.exists').write_text(str(existed))
 try:
     config = tomlkit.parse(original)
 except tomlkit.exceptions.ParseError:
@@ -2614,7 +2685,7 @@ install_codex_model() (
     local staged=
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
     if exists "$codex_config"; then
-        replace_system_file "$work_dir/codex-model.toml" "$codex_config"
+        replace_system_file "$work_dir/codex-model.toml" "$codex_config" '' "$work_dir/codex-model.toml.input" "$work_dir/codex-model.toml.exists"
     else
         mkdir -p -- "$codex_config_dir"
         staged=$(umask 077; mktemp -- "$codex_config.tmp.XXXXXX")
@@ -2668,7 +2739,7 @@ check_credential() {
     fi
     code= status=0
     if [[ $service == github ]]; then
-        if output=$(timeout 25s env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_DEBUG= \
+        if output=$(timeout --kill-after="${kill_seconds}s" 25s env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_DEBUG= \
             gh api --hostname github.com user --jq .login 2> "$work_dir/auth-probe.stderr"); then
             if [[ -n $output && $output != *$'\n'* && $output != *[!a-zA-Z0-9-]* ]]; then
                 code=200
@@ -2687,7 +2758,7 @@ check_credential() {
     else
         # Use the same authenticated model-list route as Codex. This does not
         # generate text, consume an agent task, or prove inference permissions.
-        output=$(env PATH="$HOME/.local/bin:$PATH" codex --version)
+        output=$(timeout --kill-after="${kill_seconds}s" "${version_seconds}s" env PATH="$HOME/.local/bin:$PATH" codex --version)
         if [[ $output =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             output=${BASH_REMATCH[1]}
         else

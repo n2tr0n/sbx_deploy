@@ -191,3 +191,92 @@ host `sbx ls`, then `sbx exec -it <sandbox-name> bash`, then run `desktop`.
   sandbox state and stored secrets.
 
 [Docker credential reference](https://docs.docker.com/ai/sandboxes/configuration/credentials/)
+
+
+## Installer updates and recovery
+
+Deployment takes a sandbox-wide lock on root-owned `/run/sbx-deploy.lock`
+before saving `~/sbx_deploy.sh`. A competing run exits promptly; retry after the
+active run finishes. `flock` (util-linux) must already be available. Local Codex
+login stays interactive, then takes the same lock for its configuration update.
+Do not delete the lock file to bypass an active run.
+
+Generated helpers retain their existing filenames. Aliases, auth functions, and
+prompts now live in `/usr/local/lib/sbx-deploy/shell.bash`; interactive startup
+sources that file. User startup files source the separate `path.bash`. The
+syslog startup hook remains separate in `/etc/sandbox-persistent.sh`.
+
+If an earlier run failed at `gh-clipboard/xclip.tmp.*` with permission denied,
+paste the updated installer and rerun it. No directory deletion or recursive
+ownership change is needed: staging handles existing root-owned directories,
+new user helpers belong to the invoking user, and existing file metadata is
+preserved. Fresh user helper directories are created as the invoking user.
+
+Private baselines live under `${XDG_STATE_HOME:-$HOME/.local/state}/sbx-deploy/managed`,
+keyed by the SHA-256 of each absolute managed path (without a trailing newline).
+An update accepts the recorded baseline, exact desired contents, or a recognized
+historical version when no baseline exists. Markers and filenames alone grant
+no ownership. Each file is published atomically before its baseline; an
+interruption between those steps is repaired on retry. Identical backups are
+reused. Obsolete helpers are retained rather than deleting unrecognized files.
+
+If a helper differs, deployment stops and names its path. Preserve your copy
+outside the managed path, then either rename it away so deployment can recreate
+it or restore its recorded baseline after reviewing your changes. Keep personal
+customizations in a separate file. There is no force-overwrite flag. Edited,
+duplicate, or partial startup blocks also stop migration: preserve the startup
+file, compare against its prior backup, and restore a complete supported block
+or remove the incomplete managed block yourself before retrying. Keep unrelated
+startup settings. Shell helpers and startup migrations are preflighted together
+before publication; a run interrupted during publication can be retried.
+
+Configuration editors compare their original input immediately before publishing
+and stop on an intervening edit. This detects changes but cannot make arbitrary
+external editors participate in the deployment lock; avoid editing those files
+while deployment runs. New files use publication that cannot overwrite a file
+created concurrently.
+
+Unattended limits are 60 seconds for installer downloads, 300 seconds for CLI
+installs/upgrades and plugin clones, 30 seconds for credential commands and
+credential synchronization lock acquisition, and 15 seconds for version checks.
+Processes get five seconds after termination before forced termination; stricter
+existing probes retain their limits. APT, Docker image deployment, and interactive
+login have no new total deadline. Failures retain their exit status and private
+log path; credential subprocess output stays out of installer logs.
+
+OpenCode translates the shared main/subagent defaults into its build/plan and
+general/explore agents; Codex uses its model and default-subagent settings.
+The schemas differ, while the deployment model values and gateway endpoint stay
+equivalent. Host credential substitution and environment overrides are unchanged.
+
+### Sandbox verification checklist
+
+Run these checks in disposable sandboxes; local review only checks syntax and
+publication/migration logic.
+
+- Fresh install: paste the entire script and press Enter. Check banner,
+  confirmation, compact stages, APT progress, prompts, tmux bindings, logging,
+  and all existing auth/check/desktop commands.
+- Unchanged rerun: compare managed file timestamps and backup counts; confirm
+  no package installs, network calls, configuration rewrites, or new backups.
+  Repeat with `SBX_VERBOSE=1`, a limited terminal, and without terminal colors;
+  retain only five private run logs.
+- Supported upgrades: start from the previous generated helpers and each
+  supported legacy shell/auth form, including the original desktop helper.
+  Confirm loaders replace the complete recognized blocks and unrelated text survives.
+- Edited helpers: change one helper, rerun, and confirm the named file survives
+  unchanged and the shell group is not published. Restore/recover as above.
+- Partial startup blocks: truncate or edit a loader/legacy block, and duplicate
+  a block. Confirm each case stops without rewriting that startup file.
+- Interrupted publication: interrupt after helper publication but before baseline
+  recording, and between startup-file publications. Retry; check completion,
+  ownership recording, preserved user files, and backup reuse.
+- Concurrency: hold one deployment open and start another; the second should
+  exit promptly before saving or modifying deployment files. Edit a staged
+  configuration externally and confirm publication refuses it. Check local Codex
+  login waits for the same lock only after interactive authentication.
+- Timeouts and parity: stall downloads, clones, upgrades, credential commands,
+  version checks, and credential lock acquisition; check bounded failure,
+  exit codes, cleanup, and secret-free logs. Confirm OpenCode and Codex still
+  share Sol/Luna models, host OAuth placeholders, and the MCP gateway; verify
+  inference and Context7 tools manually in both harnesses.
