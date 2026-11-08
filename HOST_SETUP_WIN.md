@@ -87,6 +87,67 @@ rather than listing every upstream tool directly.
 [Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/) ·
 [Context7 OAuth guide](https://context7.com/docs/howto/oauth)
 
+## Optional Webtop desktop
+
+Allow LinuxServer's image registry once per **Windows host**, so existing and
+future sandboxes can pull Webtop. Check first and skip adding an already allowed
+destination:
+
+```powershell
+sbx policy check network lscr.io:443
+# If denied because there is no matching allow rule:
+sbx policy allow network lscr.io:443
+```
+
+Without `--sandbox`, this is a global host default. An explicit deny still takes
+precedence. LinuxServer's redirect target `ghcr.io:443` and image blob host
+`pkg-containers.githubusercontent.com:443` must also be allowed; check these if
+the pull still fails. A `403 Forbidden` while resolving `lscr.io` can be the SBX
+proxy rejecting an unlisted registry. Rerun the installer after allowing it;
+the sandbox installer cannot edit host policy.
+
+The installer asks on every run whether to deploy/start Ubuntu XFCE Webtop.
+Answering No leaves an existing desktop intact. Without terminal input it skips
+deployment. Docker must already be available inside the sandbox; the installer
+does not install Docker or change its permissions. A running matching container
+is reused without pulling an image or rewriting configuration. A stopped one is
+started only when you answer Yes. Existing conflicting containers are preserved
+and reported rather than replaced. Interrupted downloads/starts can be retried.
+
+After deployment, check the mapping in **host PowerShell**:
+
+```powershell
+sbx ls
+sbx ports <sandbox-name>
+# Only if the mapping is absent:
+sbx ports <sandbox-name> --publish 127.0.0.1:3001:3001
+```
+
+Open **https://127.0.0.1:3001/** and accept the self-signed certificate. The
+installer prints this URL for an existing matching desktop even if deployment
+was declined; a stopped desktop is identified as stopped. It cannot verify host
+port mappings. If host port 3001 is already used by another sandbox, publish a
+different host port (for example `127.0.0.1:3002:3001`) and use that port in the
+URL instead. Keep the host binding on loopback: Webtop has no login by default.
+
+The `webtop` container uses `lscr.io/linuxserver/webtop:ubuntu-xfce`, 1 GiB shared
+memory, and the `webtop-config` Docker volume at `/config`. The volume survives
+container removal, but lives inside this sandbox; deleting the sandbox removes
+that storage too. Desktop apps and files are separate from the outer sandbox;
+no workspace or Docker socket is mounted. Install desktop applications from a
+terminal inside Webtop. Clipboard access may need permission in the outer
+browser's site settings.
+
+Run `desktop` inside the sandbox anytime to recall its desktop URL, container
+status, and host PowerShell commands for reconnecting and checking/publishing
+the port. It only displays information. The suggested name defaults to the
+sandbox hostname; confirm it with host `sbx ls`, or pass `desktop <sandbox-name>`.
+Disconnecting does not normally remove a port binding. After reconnecting,
+`tmux attach` resumes an existing tmux session. If completely disconnected, use
+host `sbx ls`, then `sbx exec -it <sandbox-name> bash`, then run `desktop`.
+
+[Webtop documentation](https://docs.linuxserver.io/images/docker-webtop/)
+
 ## Troubleshoot
 
 - Confirm the target with **host** `sbx ls`; use its current name below.

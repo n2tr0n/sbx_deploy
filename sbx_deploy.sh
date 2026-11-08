@@ -21,7 +21,10 @@
 # 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
-# 13. Clean up and summarize; refresh pasted/sourced interactive shells on success.
+# 13. Ask on every run whether to deploy/start optional Ubuntu XFCE Webtop;
+#     reuse its container/config volume and show its URL and host port command.
+#     Install desktop to recall status, URL and reconnection commands anytime.
+# 14. Clean up and summarize; refresh pasted/sourced interactive shells on success.
 #    Child-shell runs show manual reload instructions and local auth overrides.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
@@ -58,6 +61,8 @@ sbx_save_and_run() {
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
+# Ask each run about optional Webtop; preserve desktop data and show access details.
+# Run desktop anytime for desktop status and host reconnection instructions.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -205,6 +210,7 @@ fi
 started_at=$SECONDS
 stage= operation= spinner_pid= tee_pid= setup_session= auth_cache_staged=
 apt_status_file= apt_output_file=
+webtop_status=
 stage_started=$SECONDS
 operation_offset=0
 changed_count=0 unchanged_count=0 verified_count=0 warning_count=0
@@ -393,6 +399,11 @@ finish_installer() {
         printf '\nComplete%s%s stages changed%s%s unchanged%s%s verified%s%ss\n' \
             "$separator" "$changed_count" "$separator" "$unchanged_count" \
             "$separator" "$verified_count" "$separator" "$((SECONDS - started_at))" | tee -a -- "$log_file" >&3
+        if [[ -n $webtop_status ]]; then
+            printf '\nWebtop (%s): https://127.0.0.1:3001/\nHost PowerShell (once, if not already mapped):\n  sbx ports <sandbox-name> --publish 127.0.0.1:3001:3001\nUse the name from sbx ls. HTTPS uses a self-signed certificate.\n' \
+                "$webtop_status" | tee -a -- "$log_file" >&3
+        fi
+        printf '\nDesktop connection help anytime: desktop\n' | tee -a -- "$log_file" >&3
         if "$sbx_child_shell" || [[ $- != *i* ]]; then
             warn 'Child-shell run: reload your calling shell or open a new shell to use wrappers, aliases, and prompts.'
             cat >&3 <<'SBX_NEXT_STEPS'
@@ -822,6 +833,44 @@ ensure_wrapper() (
 )
 ensure_wrapper "$tmux_wrapper" wrapper_contents
 ensure_wrapper "$HOME/.local/bin/btop" btop_wrapper_contents
+
+desktop_contents() {
+    cat <<'SBX_DESKTOP'
+#!/usr/bin/env bash
+set -euo pipefail
+if (( $# > 1 )); then
+    printf 'Usage: desktop [sandbox-name]\n' >&2
+    exit 2
+fi
+sandbox_name=${1:-${HOSTNAME:-}}
+if [[ ! $sandbox_name =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    sandbox_name='<sandbox-name>'
+fi
+printf '\nWebtop desktop: https://127.0.0.1:3001/\n'
+if ! command -v docker >/dev/null 2>&1; then
+    printf 'Status: Docker is not installed in this sandbox.\n'
+elif ! docker info >/dev/null 2>&1; then
+    printf 'Status: Docker is unavailable; check docker info for details.\n'
+else
+    container_id=$(docker container ls -a --filter 'name=^/webtop$' --format '{{.ID}}')
+    if [[ -n $container_id ]]; then
+        docker inspect --format 'Status: {{.State.Status}} ({{.Config.Image}})' "$container_id"
+        printf 'If stopped, start inside this sandbox: docker start webtop\n'
+    else
+        printf 'Status: Webtop is not deployed. Rerun bash ~/sbx_deploy.sh and choose Yes.\n'
+    fi
+fi
+printf '\nRun these on your Windows HOST in PowerShell:\n  sbx ls\n'
+printf '  sbx exec -it %s bash\n' "$sandbox_name"
+printf '  sbx ports %s\n' "$sandbox_name"
+printf 'If port 3001 is not already mapped:\n  sbx ports %s --publish 127.0.0.1:3001:3001\n' "$sandbox_name"
+printf '\nThe name above defaults to this sandbox hostname; confirm it with host sbx ls.\n'
+printf 'Use desktop SANDBOX-NAME to print commands for a different name.\n'
+printf 'Port bindings normally survive disconnection. If using another host port,\nuse that port in the URL. Accept Webtop\047s self-signed HTTPS certificate.\n'
+printf 'After reconnecting, run tmux attach to resume an existing tmux session.\n\n'
+SBX_DESKTOP
+}
+ensure_wrapper "$HOME/.local/bin/desktop" desktop_contents
 
 # Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
 gh_clipboard_contents() {
@@ -1803,6 +1852,102 @@ check_credential() {
 }
 check_credential github 'GitHub auth'
 check_credential openai 'OpenAI auth'
+
+stage_begin 'Webtop' 'Checking optional desktop'
+# Descriptor 6 holds the caller's stdin, not the literal installer heredoc.
+# A pasted run must never read its payload (or later shell commands) as answers.
+stop_spinner
+drain_output
+webtop_choice=n
+prompt_fd=
+if [[ -t 6 ]]; then
+    prompt_fd=6
+elif { exec 7</dev/tty; } 2>/dev/null; then
+    prompt_fd=7
+fi
+if [[ -n $prompt_fd ]]; then
+    while :; do
+        printf '\nDeploy/start Webtop desktop? [y/N] (No keeps any existing desktop): ' >&3
+        if ! IFS= read -r -u "$prompt_fd" webtop_choice; then
+            webtop_choice=n
+            printf '\n' >&3
+            break
+        fi
+        case ${webtop_choice,,} in
+            y|yes) webtop_choice=y; break ;;
+            n|no|'') webtop_choice=n; break ;;
+            *) printf 'Please enter y or n.\n' >&3 ;;
+        esac
+    done
+    [[ $prompt_fd != 7 ]] || exec 7<&-
+else
+    printf '\nNo terminal input; optional Webtop deployment skipped.\n' >&3
+fi
+printf 'Webtop deployment requested: %s\n' "$webtop_choice" >> "$log_file"
+capture_output
+start_spinner
+webtop_image=lscr.io/linuxserver/webtop:ubuntu-xfce
+webtop_id=
+if command -v docker >/dev/null 2>&1; then
+    # Do not install/reconfigure Docker or start a daemon for a declined option.
+    if docker info >/dev/null 2> "$work_dir/webtop-docker.stderr"; then
+        webtop_id=$(docker container ls -a --filter 'name=^/webtop$' --format '{{.ID}}')
+    elif [[ $webtop_choice == y ]]; then
+        cat -- "$work_dir/webtop-docker.stderr" >&2
+        die 'Webtop needs access to the sandbox Docker Engine; repair Docker and rerun.'
+    else
+        warn 'Docker unavailable; existing Webtop status could not be checked.'
+    fi
+elif [[ $webtop_choice == y ]]; then
+    die 'Webtop needs Docker inside the sandbox; use an SBX image with Docker and rerun.'
+fi
+if [[ -n $webtop_id ]]; then
+    docker inspect "$webtop_id" > "$work_dir/webtop-container.json"
+    # Preserve existing containers and volumes. Refuse a conflicting name rather
+    # than deleting/recreating it, including partially created user deployments.
+    webtop_status=$(python3 - "$work_dir/webtop-container.json" "$webtop_image" <<'SBX_WEBTOP_INSPECT'
+import json
+from pathlib import Path
+import sys
+
+container = json.loads(Path(sys.argv[1]).read_text())[0]
+if container['Config']['Image'] != sys.argv[2]:
+    sys.exit('Existing webtop uses a different image; preserve it and resolve the name conflict manually.')
+mounts = container.get('Mounts', [])
+if not any(m.get('Destination') == '/config' and m.get('Type') == 'volume'
+           and m.get('Name') == 'webtop-config' and m.get('RW') for m in mounts):
+    sys.exit('Existing webtop has different config storage; preserve it and resolve the conflict manually.')
+bindings = container['HostConfig'].get('PortBindings') or {}
+if not any(p.get('HostPort') == '3001' and p.get('HostIp', '') in ('', '0.0.0.0')
+           for p in (bindings.get('3001/tcp') or [])):
+    sys.exit('Existing webtop needs sandbox port 3001 mapped to container port 3001; no container was replaced.')
+state = container['State']
+if state.get('Paused') or state.get('Restarting') or state.get('Dead'):
+    sys.exit('Existing webtop is paused, restarting or dead; repair it before rerunning.')
+print('running' if state['Running'] else 'stopped')
+SBX_WEBTOP_INSPECT
+    )
+fi
+if [[ $webtop_choice == y ]]; then
+    if [[ -z $webtop_id ]]; then
+        stage_operation 'Creating Ubuntu XFCE desktop (first download may take time)'
+        # Docker reuses a local image; never pull/update it on an identical rerun.
+        # A failed start leaves a named container that the next run can retry.
+        docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
+            -p 3001:3001 -v webtop-config:/config "$webtop_image"
+        webtop_status=running
+        stage_done changed 'Deployed Ubuntu XFCE desktop'
+    elif [[ $webtop_status == stopped ]]; then
+        stage_operation 'Starting existing Webtop desktop'
+        docker start "$webtop_id"
+        webtop_status=running
+        stage_done changed 'Started existing desktop; data preserved'
+    else
+        stage_done unchanged 'Desktop already running'
+    fi
+else
+    stage_done unchanged 'Deployment declined; existing desktop preserved'
+fi
 )
 SBX_DEPLOY_PAYLOAD
 )
