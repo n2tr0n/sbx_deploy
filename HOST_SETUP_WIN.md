@@ -43,7 +43,10 @@ bindings:
 These settings survive sandbox recreation. Afterward, run the current installer
 in sandbox Bash; it imports masked OpenCode OAuth and configures Codex routing.
 `auth_all` is an optional sandbox-local login, stores credentials there, and does
-not disable the host proxy.
+not disable the host proxy. No sandbox login is needed when host credentials
+are configured. Individual overrides are `auth_opencode_openai`,
+`auth_codex_openai`, and `auth_gh`; add `--force` to repeat a local login.
+Rerun the installer to restore managed OpenCode/Codex defaults.
 
 ## Context7 MCP gateway
 
@@ -67,9 +70,14 @@ runs remotely. No API key, sandbox package install, or credentials.yaml binding
 is needed for this OAuth setup. Docker Desktop MCP Toolkit registrations are
 separate from `sbx mcp`.
 
-The installer prints copyable host restart/Context7-load commands using the
-sandbox hostname; confirm the name with host `sbx ls`. Run the restart first
-when needed, then attach Context7 if absent and run sandbox `check_credentials` and `check_mcp`.
+The installer reports detected credential problems with relevant recovery steps
+and labels cached successes as previously verified. Its post deployment section
+prints `sbx daemon restart`, then the Context7 load command with the sandbox
+hostname filled in. Confirm the target with host `sbx ls`; restart when needed,
+then attach Context7 if absent. Host attachment is not verified by the installer.
+Run sandbox `check_credentials` and
+`check_mcp` afterward. Successful installer completion does not verify inference
+or upstream MCP authorization.
 
 Supported SBX agent integrations connect to the sandbox gateway at startup.
 The installer configures the same gateway URL in OpenCode and Codex, including

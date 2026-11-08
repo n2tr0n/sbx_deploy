@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Features, in execution order (keep current):
 # 1. Save ~/sbx_deploy.sh with owner execute permission; back up differing copies.
-# 2. Show the SBX banner and verbose-mode command.
+# 2. Show the unchanged SBX artwork with terminal-aware green/grey accents.
+#    Require terminal confirmation of the hostname before deployment (default No).
 # 3. Align stage/result/details columns; show APT names and retain five private logs.
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Install missing Codex CLI with labeled, bounded download/install/version steps;
@@ -22,14 +23,15 @@
 #     Connect both harnesses to the sandbox's host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
 #    Install check_credentials for auth/source checks and check_mcp for MCP discovery.
-#    Print named host commands for GitHub recovery and Context7 attachment.
+#    Consolidate detected issues and relevant host recovery actions at the end.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
 # 13. Ask on every run whether to deploy/start optional Ubuntu XFCE Webtop;
 #     reuse its container/config volume and show its URL and host port command.
 #     Install desktop to recall status, URL and reconnection commands anytime.
 # 14. Clean up and summarize; refresh pasted/sourced interactive shells on success.
-#    Child-shell runs show manual reload instructions and local auth overrides.
+#    Box the result/actions; show checks, desktop access, reload help and log path.
+#    Print host daemon restart and named Context7 attachment commands.
 #
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 # Save before starting the installer, including when this entire file is pasted
@@ -66,7 +68,9 @@ sbx_save_and_run() {
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
 # Run check_credentials for auth/source checks; check_mcp lists brokered MCP tools.
-# Print host GitHub recovery and Context7 attachment commands for this sandbox.
+# Summarize results and detected issues; show checks, desktop access and log path.
+# Print host daemon restart and named Context7 attachment commands.
+# Confirm the hostname after the banner; default No, require terminal input.
 # Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask each run about optional Webtop; preserve desktop data and show access details.
@@ -94,12 +98,11 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed.\n'
+                :
             else
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive checks:\n  check_credentials\n  check_mcp\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
@@ -152,11 +155,56 @@ sbx_save_and_run <<'SBX_DEPLOY_PAYLOAD'
 (
 set -euo pipefail
 
+# Keep terminal presentation independent from captured command output.
+exec 3>&1 4>&2
+verbose=${SBX_VERBOSE:-0}
+animated=false
+green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green=
+utf8=false
+spinner_frames=('|' '/' '-' '\')
+locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
+if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then
+    utf8=true
+    spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+fi
+if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
+    [[ $verbose == 1 ]] || animated=true
+    if [[ -z ${NO_COLOR+x} ]]; then
+        green=$'\033[32m' amber=$'\033[33m' red=$'\033[31m'
+        muted=$'\033[90m' reset=$'\033[0m'
+        bold_amber=$'\033[1;93m' bold_red=$'\033[1;91m'
+        banner_white=$'\033[1;37m'
+        banner_bright_green=$'\033[1;92m'
+    fi
+fi
+
 # FIGlet Slant by Glenn Chappell, pre-rendered at full width.
-cat <<'SBX_BANNER'
+banner_line=0
+while IFS= read -r line; do
+    case $banner_line in
+        2)
+            label='N i T R O N   P R E S E N T S'
+            line=${line/"$label"/"$banner_bright_green$label$muted"}
+            ;;
+        4|5|6|7|8)
+            line="${line:0:6}$green${line:6:31}$muted${line:37}"
+            if (( banner_line == 6 )); then
+                label='.:: S B X   D E P L O Y ::.'
+                accent="$green.:: $banner_white"'S B X   D E P L O Y'"$green ::.$muted"
+                line=${line/"$label"/"$accent"}
+            fi
+            ;;
+        9)
+            label="Nitron's Deployment Script for SBX v-0.1a"
+            line=${line/"$label"/"$green$label$muted"}
+            ;;
+    esac
+    printf '%s%s%s\n' "$muted" "$line" "$reset" >&3
+    banner_line=$((banner_line + 1))
+done <<'SBX_BANNER'
 
   .-----------------------------------------------------------------------.
- /__________  N I T R O N   P R E S E N T S  ______________________________\
+ /__________  N i T R O N   P R E S E N T S  ______________________________\
  \_  _                                                                 _  _/
    \/     _______   _______ ___   ___                                   \/
    /\    /  _____/ /  __   \\  \ /  /                                   /\
@@ -168,6 +216,37 @@ cat <<'SBX_BANNER'
  \_________________________________________________________________________/
 
 SBX_BANNER
+
+# Read from the terminal, never from a pasted payload or piped shell commands.
+# Saving the installer above is intentional; declining skips deployment and
+# returns 130 so the outer wrapper does not refresh the calling shell.
+confirmation_fd=
+if [[ -t 0 ]]; then
+    confirmation_fd=0
+elif { exec 7</dev/tty; } 2>/dev/null; then
+    confirmation_fd=7
+fi
+if [[ -z $confirmation_fd ]]; then
+    printf 'No terminal input; deployment cancelled.\n' >&3
+    exit 130
+fi
+confirmation_warning='[!]'
+if "$utf8"; then confirmation_warning='⚠️'; fi
+while :; do
+    printf '%s%s Are you sure you want to run this script on %s%s%s? [y/N]%s ' \
+        "$bold_amber" "$confirmation_warning" "$bold_red" "${HOSTNAME:-unknown}" "$bold_amber" "$reset" >&3
+    if ! IFS= read -r -u "$confirmation_fd" confirmation; then
+        printf '\nDeployment cancelled.\n' >&3
+        exit 130
+    fi
+    case ${confirmation,,} in
+        y|yes) break ;;
+        n|no|'') printf 'Deployment cancelled.\n' >&3; exit 130 ;;
+        *) printf 'Please enter y or n.\n' >&3 ;;
+    esac
+done
+[[ $confirmation_fd != 7 ]] || exec 7<&-
+printf '\n' >&3
 
 printf 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_deploy.sh\n\n'
 
@@ -181,7 +260,6 @@ exists() { [[ -e "$1" || -L "$1" ]]; }
 
 # Reporting uses separate terminal descriptors so command output stays in the
 # log. Everything remains inside the pasted subshell, including these redirects.
-exec 3>&1 4>&2
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/sbx-deploy"
 if ! (umask 077; mkdir -p -m 700 -- "$log_dir") ||
    [[ -L "$log_dir" || ! -O "$log_dir" ]] ||
@@ -198,23 +276,6 @@ if ! work_dir=$(umask 077; mktemp -d); then
     exit 1
 fi
 
-verbose=${SBX_VERBOSE:-0}
-animated=false
-green= amber= red= muted= reset=
-separator=' | '
-spinner_frames=('|' '/' '-' '\')
-locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
-if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then
-    separator=' · '
-    spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-fi
-if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
-    [[ $verbose == 1 ]] || animated=true
-    if [[ -z ${NO_COLOR+x} ]]; then
-        green=$'\033[32m' amber=$'\033[33m' red=$'\033[31m'
-        muted=$'\033[2m' reset=$'\033[0m'
-    fi
-fi
 started_at=$SECONDS
 stage= operation= spinner_pid= tee_pid= setup_session= auth_cache_staged=
 apt_status_file= apt_output_file=
@@ -223,6 +284,97 @@ stage_started=$SECONDS
 operation_offset=0
 changed_count=0 unchanged_count=0 verified_count=0 warning_count=0
 finishing=false
+github_auth_status='not checked'
+openai_auth_status='not checked'
+declare -a issue_keys=() issue_titles=() issue_details=() issue_actions=()
+
+# A warning is one issue, even when several recovery steps belong to it.
+record_issue() {
+    local key=$1 title=$2 detail=$3 actions=${4-} i
+    for ((i=0; i<${#issue_keys[@]}; i++)); do
+        [[ ${issue_keys[i]} != "$key" ]] || return 0
+    done
+    issue_keys+=("$key") issue_titles+=("$title")
+    issue_details+=("$detail") issue_actions+=("$actions")
+    warning_count=${#issue_keys[@]}
+    printf 'Warning: %s - %s\n%s\n' "$title" "$detail" "$actions" >> "$log_file"
+}
+
+# Emit plain text to the private log separately from terminal styling.
+report_line() {
+    printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3
+    printf '%s\n' "$1" >> "$log_file"
+}
+summary_width=${COLUMNS:-}
+if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
+    summary_width=$(tput cols 2>/dev/null) || summary_width=80
+fi
+[[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
+summary_width=$((10#$summary_width))
+(( summary_width > 0 )) || summary_width=80
+(( summary_width <= 80 )) || summary_width=80
+box_open=false
+box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
+command_bullet='-'
+if "$utf8"; then
+    box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
+    command_bullet='•'
+fi
+box_rule() {
+    local rule
+    printf -v rule '%*s' "$((summary_width - 2))" ''
+    rule=${rule// /$box_horizontal}
+    report_line "$1$rule$2" "$muted"
+}
+summary_begin() {
+    report_line ''
+    box_open=false
+    if (( summary_width >= 60 )); then
+        box_rule "$box_tl" "$box_tr"
+        box_open=true
+    fi
+    summary_text "$1" "${2:-$muted}"
+}
+summary_end() {
+    if "$box_open"; then box_rule "$box_bl" "$box_br"; fi
+    box_open=false
+}
+summary_text() {
+    local text=$1 color=${2-} kind=${3:-prose} width=$((summary_width - 4)) word line='' padding
+    # Commands, paths and diagnostic excerpts must remain intact and copyable.
+    if [[ $kind == literal ]]; then
+        if "$box_open" && (( ${#text} <= width )); then
+            printf -v padding '%*s' "$((width - ${#text}))" ''
+            printf '%s%s%s %s%s%s%s %s%s%s\n' "$muted" "$box_vertical" "$reset" "$color" "$text" "$reset" "$padding" "$muted" "$box_vertical" "$reset" >&3
+            printf '%s\n' "$text" >> "$log_file"
+        else
+            report_line "  $text" "$color"
+        fi
+        return
+    fi
+    # Split prose on spaces using read, never pathname expansion.
+    local -a words=()
+    read -r -a words <<< "$text"
+    for word in "${words[@]}"; do
+        if [[ -n $line ]] && (( ${#line} + ${#word} + 1 > width )); then
+            summary_text "$line" "$color" literal
+            line=''
+        fi
+        line+="${line:+ }$word"
+    done
+    summary_text "$line" "$color" literal
+}
+summary_command() {
+    local command="$command_bullet $1" description=${2-}
+    if [[ -z $description ]]; then
+        summary_text "$command" '' literal
+    elif (( ${#command} + ${#description} + 4 <= summary_width - 4 )); then
+        summary_text "$command    $description" '' literal
+    else
+        summary_text "$command" '' literal
+        summary_text "$description" "$muted"
+    fi
+}
 
 # Pad plain text separately from ANSI colors so all terminal modes share the
 # same columns. Callers choose a newline or an in-place spinner refresh.
@@ -353,12 +505,12 @@ stage_done() {
 }
 warn() {
     stop_spinner
-    warning_count=$((warning_count + 1))
+    record_issue "warning:$*" "${stage:-Setup}" "$*"
     report_row "${stage:-Setup}" WARNING "$*" "$amber"
     printf '\n' >&3
-    printf 'Warning: %s\n' "$*" >> "$log_file"
     [[ -z $stage ]] || start_spinner
 }
+
 die() {
     local status=$?
     status=${2:-$status}
@@ -378,7 +530,7 @@ cleanup_installer() {
     fi
 }
 finish_installer() {
-    local status=$? reason host_sandbox_arg
+    local status=$? reason host_sandbox_arg line i action heading desktop_color
     trap - EXIT INT TERM
     set +e
     finishing=true
@@ -396,52 +548,103 @@ finish_installer() {
     cleanup_installer
     exec 1>&3 2>&4
     if (( status != 0 )); then
-        report_row "${stage:-Setup}" FAILED "$reason" "$red"
-        printf '\n' >&3
-        printf 'Failed: %s\n' "$reason" >> "$log_file"
-        printf '\n' >&3
-        cat -- "$work_dir/excerpt" >&3
+        heading="SETUP FAILED (exit $status)"
+        case $status in
+            130|143) heading="SETUP INTERRUPTED (exit $status)" ;;
+        esac
+        summary_begin "$heading" "$red"
+        summary_text "${stage:-Setup}: $reason"
+        summary_end
+        while IFS= read -r line || [[ -n $line ]]; do
+            summary_text "$line" '' literal
+        done < "$work_dir/excerpt"
     fi
     rm -rf -- "$work_dir" || warn 'Could not remove the installer temporary workspace.'
     if (( status == 0 )); then
-        printf '\nComplete%s%s stages changed%s%s unchanged%s%s verified%s%ss\n' \
-            "$separator" "$changed_count" "$separator" "$unchanged_count" \
-            "$separator" "$verified_count" "$separator" "$((SECONDS - started_at))" | tee -a -- "$log_file" >&3
+        heading='SETUP COMPLETE'
+        if (( warning_count )); then
+            heading='SETUP COMPLETE - ATTENTION NEEDED'
+        fi
+        summary_begin "$heading" "$green"
+        summary_text ''
+        summary_text "Stages: $changed_count changed | $unchanged_count unchanged | $verified_count verified"
+        summary_text "Warnings: $warning_count | Elapsed: $((SECONDS - started_at))s"
+        summary_text "GitHub: $github_auth_status"
+        summary_text "OpenAI: $openai_auth_status"
+        summary_text ''
+        summary_text 'OpenAI verification covers model-list access, not inference.' "$muted"
+        summary_end
+    fi
+    if (( warning_count )); then
+        summary_begin "ATTENTION ($warning_count issues)" "$amber"
+        for ((i=0; i<${#issue_keys[@]}; i++)); do
+            (( i == 0 )) || summary_text ''
+            summary_text "${issue_titles[i]}: ${issue_details[i]}"
+            while IFS= read -r action; do
+                if [[ $action == '  '* ]]; then
+                    summary_text "$action" '' literal
+                elif [[ -n $action ]]; then
+                    summary_text "$action"
+                fi
+            done <<< "${issue_actions[i]}"
+        done
+        summary_end
+    fi
+    if (( status == 0 )); then
         host_sandbox_arg=${HOSTNAME:-}
         if [[ ! $host_sandbox_arg =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
             host_sandbox_arg='$sandboxName'
         fi
-        {
-            printf '\nWindows HOST PowerShell - new sandbox setup\n'
-            if [[ $host_sandbox_arg =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
-                printf 'Sandbox: %s (from hostname; confirm with host sbx ls).\n' "$host_sandbox_arg"
-            else
-                printf 'Confirm the sandbox name first:\n  sbx ls\n  $sandboxName = Read-Host "Sandbox name"\n'
-            fi
-            printf '\nGitHub passthrough: typically needed after creation on Windows v0.51.0.\nSkip if GitHub already works; restarting can interrupt sandbox sessions.\n  sbx daemon restart\n'
-            printf '\nContext7: attach after the restart, if its tools are absent.\nHost registration/OAuth must already be configured.\n  sbx mcp load context7 --sandbox %s\n' "$host_sandbox_arg"
-            printf '\nBack in sandbox Bash:\n  check_credentials\n  check_mcp\n'
-        } | tee -a -- "$log_file" >&3
         if [[ -n $webtop_status ]]; then
-            printf '\nWebtop (%s): https://127.0.0.1:3001/\nHost PowerShell (once, if not already mapped):\n  sbx ports %s --publish 127.0.0.1:3001:3001\nHTTPS uses a self-signed certificate.\n' \
-                "$webtop_status" "$host_sandbox_arg" | tee -a -- "$log_file" >&3
+            desktop_color=$green
+            [[ $webtop_status != stopped ]] || desktop_color=$amber
+            summary_begin "WEBTOP - $webtop_status" "$desktop_color"
+            summary_text 'https://127.0.0.1:3001/' '' literal
+            summary_text 'Accept the self-signed certificate. Use your mapped host port if different.' "$muted"
+            if [[ $webtop_status == stopped ]]; then
+                summary_text 'Sandbox Bash: start the desktop when needed.'
+                summary_text 'docker start webtop' '' literal
+            fi
+            summary_text 'Windows PowerShell: confirm the sandbox name and check its ports.'
+            summary_command 'sbx ls'
+            if [[ $host_sandbox_arg == '$sandboxName' ]]; then
+                summary_text '$sandboxName = Read-Host "Sandbox name"' '' literal
+            fi
+            summary_command "sbx ports $host_sandbox_arg"
+            summary_text 'Only if the mapping is absent:' "$muted"
+            summary_command "sbx ports $host_sandbox_arg --publish 127.0.0.1:3001:3001"
+            summary_text ''
+            summary_end
         fi
-        printf '\nDesktop connection help anytime: desktop\n' | tee -a -- "$log_file" >&3
+        summary_begin 'SANDBOX BASH - QUICK REFERENCE' "$green"
+        summary_text ''
         if "$sbx_child_shell" || [[ $- != *i* ]]; then
-            warn 'Child-shell run: reload your calling shell or open a new shell to use wrappers, aliases, and prompts.'
-            cat >&3 <<'SBX_NEXT_STEPS'
-
-Reload your shell (installer changes ran in a subshell):
-  export PATH="$HOME/.local/bin:$PATH"; hash -r
-  source /etc/bash.bashrc
-
-SBX_NEXT_STEPS
+            summary_text 'Reload your calling shell, or open a new shell, before using helpers:'
+            summary_text 'export PATH="$HOME/.local/bin:$PATH"; hash -r' '' literal
+            summary_text 'source /etc/bash.bashrc' '' literal
         fi
+        summary_command check_credentials 'Live authentication and credential sources'
+        summary_command check_mcp 'Discover gateway servers and tools'
+        if [[ -n $webtop_status ]]; then
+            summary_command desktop 'Desktop status and reconnection help'
+        fi
+        summary_text ''
+        summary_end
+        summary_begin 'POST DEPLOYMENT COMMANDS' "$green"
+        summary_text ''
+        summary_text 'Windows PowerShell: run in this order for a new sandbox.'
+        summary_command 'sbx daemon restart'
+        if [[ $host_sandbox_arg == '$sandboxName' && -z $webtop_status ]]; then
+            summary_text '$sandboxName = Read-Host "Sandbox name"' '' literal
+        fi
+        summary_command "sbx mcp load context7 --sandbox $host_sandbox_arg"
+        summary_text ''
+        summary_text 'Restart may interrupt sessions.' "$muted"
+        summary_end
     fi
-    if (( warning_count )); then
-        printf '\n%s warning(s); see the log for details.\n' "$warning_count" >&3
-    fi
-    printf '\nLog: %s\n' "$log_file" >&3
+    report_line ''
+    report_line "Log: $log_file"
+    report_line ''
     exit "$status"
 }
 trap finish_installer EXIT
@@ -2017,7 +2220,7 @@ host_oauth=false
 stage_begin 'Host credentials' 'Checking proxy-managed OpenAI configuration'
 case ${SBX_CRED_OPENAI_MODE:-none} in
     oauth) host_oauth=true ;;
-    *) warn 'Host OpenAI OAuth unavailable; configure it on the host and rerun.' ;;
+    *) : ;; # The credential stage reports this once, with recovery actions.
 esac
 # GitHub mode can lag host updates. The live check below determines whether
 # GitHub access works instead of warning based only on the mode variable.
@@ -2365,7 +2568,8 @@ check_credential() {
         done
     } | sha256sum)
     if [[ ${SBX_CHECK_AUTH:-0} != 1 && -f $cache && $(< "$cache") == "$fingerprint" ]]; then
-        stage_done unchanged 'Previously verified; SBX_CHECK_AUTH=1 checks again'
+        printf -v "${service}_auth_status" '%s' 'previously verified (cached)'
+        stage_done unchanged 'Previously verified (cached)'
         return 0
     fi
     code= status=0
@@ -2382,9 +2586,9 @@ check_credential() {
             code=$(sed -nE 's/.*HTTP ([0-9]{3}).*/\1/p' "$work_dir/auth-probe.stderr" | tail -n 1)
         fi
     elif ! "$host_oauth"; then
-        warn 'OpenAI OAuth is not configured for this sandbox.'
-        warn 'Host PowerShell: sbx secret set openai --oauth; authorize the OpenAI OAuth binding, then restart the sandbox.'
-        stage_done attention 'OpenCode/Codex host OAuth needs setup'
+        openai_auth_status='needs attention'
+        record_issue openai OpenAI 'Host OAuth is not configured.' $'Windows PowerShell:\n  sbx secret set openai --oauth\nConfigure the OAuth binding using HOST_SETUP_WIN.md, then restart the sandbox.\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+        stage_done attention 'Host OAuth needs setup; see final actions'
         return 0
     else
         # Use the same authenticated model-list route as Codex. This does not
@@ -2409,6 +2613,7 @@ check_credential() {
         printf '%s\n' "$fingerprint" > "$auth_cache_staged"
         mv -fT -- "$auth_cache_staged" "$cache"
         auth_cache_staged=
+        printf -v "${service}_auth_status" '%s' verified
         if [[ $service == github ]]; then
             stage_done verified 'GitHub account request accepted'
         else
@@ -2416,27 +2621,23 @@ check_credential() {
         fi
         return 0
     fi
-    warn "$service credential check failed (HTTP ${code:-unknown}, exit $status)."
+    local detail="$service credential check failed (HTTP ${code:-unknown}, exit $status)." actions
+    printf -v "${service}_auth_status" '%s' 'needs attention'
     case $code in
         401)
             if [[ $service == github ]]; then
-                warn 'Host PowerShell: gh api user --jq .login'
-                warn 'If the host check works: sbx daemon restart (typically needed for GitHub passthrough on this Windows v0.51.0 setup).'
-                warn "If no host GitHub secret exists: sbx secret set github --command 'gh auth token --hostname github.com'"
-                warn "If the host check fails: gh auth login --hostname github.com; then sbx secret set github --command 'gh auth token --hostname github.com' --force"
-                warn 'If still failing, check the GitHub apiKey binding in the host sbx/credentials.yaml file.'
+                actions=$'Windows PowerShell:\n  gh api user --jq .login\nIf the host check succeeds, restart the daemon:\n  sbx daemon restart\nRestarting can interrupt sandbox sessions.\nIf the host check fails, repair host login using HOST_SETUP_WIN.md.'
             else
-                warn 'Host PowerShell: check sbx secret ls and the OpenAI OAuth binding; if configured, try sbx daemon restart.'
-                warn 'If OAuth needs renewal: sbx secret set openai --oauth'
-            fi
-            ;;
-        403) warn 'Check host credential permissions and sandbox network policy; do not switch to local login.' ;;
-        429) warn 'Service rate limit reached; retry later.' ;;
-        5??) warn 'Service or proxy error; retry later and inspect host proxy logs if it persists.' ;;
-        *) warn 'Check sandbox connectivity, proxy and CA trust; inspect host proxy logs. A timeout is not proof of bad credentials.' ;;
+                actions=$'Windows PowerShell:\n  sbx secret ls\nIf OAuth needs renewal:\n  sbx secret set openai --oauth\nCheck the OAuth binding using HOST_SETUP_WIN.md.'
+            fi ;;
+        403) actions='Check host credential permissions and sandbox network policy; see HOST_SETUP_WIN.md.' ;;
+        429) actions='Rate limit reached; retry later.' ;;
+        5??) actions='Service or proxy error; retry later. If it persists, inspect host proxy logs using HOST_SETUP_WIN.md.' ;;
+        *) actions='Check sandbox connectivity, proxy and CA trust using HOST_SETUP_WIN.md. A timeout does not prove bad credentials.' ;;
     esac
-    warn 'After fixing it, in sandbox Bash: SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
-    stage_done attention 'Authentication unverified; follow the actions above'
+    actions+=$'\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+    record_issue "$service" "$2" "$detail" "$actions"
+    stage_done attention 'Authentication unverified; see final actions'
 }
 check_credential github 'GitHub auth'
 check_credential openai 'OpenAI auth'
@@ -2550,12 +2751,11 @@ case $? in
             esac
             hash -r
             if source /etc/bash.bashrc; then
-                printf '\nShell refreshed.\n'
+                :
             else
                 printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
             fi
         fi
-        printf '\nAuthentication defaults to Docker host credentials and proxy.\nNo sandbox login is needed when host credentials are configured.\n\nOptional local-login override (stores credentials in this sandbox):\n  auth_all\nOr individually: auth_opencode_openai, auth_codex_openai, auth_gh\nAdd --force to repeat local login. These helpers do not disable the host proxy.\nRerun the installer to restore managed OpenCode/Codex defaults.\n\nLive checks:\n  check_credentials\n  check_mcp\n\n'
         ;;
     *) (exit "$?") ;; # Preserve failure status without exiting a pasted shell.
 esac
