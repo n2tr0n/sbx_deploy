@@ -15,7 +15,6 @@
 # Roadmap features
 
 - desktop
-- context7 MCP (via gateway)
 - rsyslog
 - codex deployment delay
 - tighten; clear the vibe coded slop

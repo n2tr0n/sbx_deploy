@@ -43,7 +43,49 @@ bindings:
 These settings survive sandbox recreation. Afterward, run the current installer
 in sandbox Bash; it imports masked OpenCode OAuth and configures Codex routing.
 `auth_all` is an optional sandbox-local login, stores credentials there, and does
-not disable the host proxy. Context7 is not configured yet.
+not disable the host proxy.
+
+## Context7 MCP gateway
+
+Configure Context7 from **host PowerShell**, outside the sandbox installer.
+Check `sbx mcp ls` and `sbx mcp inspect context7` first. If a matching registration
+already exists, skip registration; check `sbx mcp auth status context7` and run
+`sbx mcp auth context7` only if authorization is needed.
+
+```powershell
+# Once per host, if context7 is not registered; complete browser sign-in.
+sbx mcp add context7 --url https://mcp.context7.com/mcp/oauth
+
+# Once per sandbox: use the target name from sbx ls.
+sbx mcp load context7 --sandbox <sandbox-name>
+```
+
+The attachment persists across sandbox restarts; skip loading it again after a
+successful setup. For a new sandbox, pass `--static-mcp context7` at creation
+to preload it. Registration and OAuth credentials remain on the host; Context7
+runs remotely. No API key, sandbox package install, or credentials.yaml binding
+is needed for this OAuth setup. Docker Desktop MCP Toolkit registrations are
+separate from `sbx mcp`.
+
+Supported SBX agent integrations connect to the sandbox gateway at startup.
+The installer configures the same gateway URL in OpenCode and Codex, including
+Codex installed into an OpenCode sandbox. Host loading alone does not configure
+a manually installed harness. For an existing sandbox without the Codex entry,
+check `codex mcp list` in **sandbox Bash**, then run this once if absent:
+
+```bash
+codex mcp add mcp-gateway --url http://mcp-gateway.docker.internal/mcp
+```
+
+Restart Codex after adding the entry and check `/mcp`; tools appear under the
+gateway, rather than a separate Context7 server entry. OAuth stays on the host;
+do not run a separate Context7 login in Codex. Verify Context7 tools in both
+OpenCode and Codex and try a documentation query before considering each
+harness verified. The gateway may expose tools through `mcp-exec` or `code-mode`
+rather than listing every upstream tool directly.
+
+[Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/) ·
+[Context7 OAuth guide](https://context7.com/docs/howto/oauth)
 
 ## Troubleshoot
 

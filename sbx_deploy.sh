@@ -17,6 +17,7 @@
 # 10. Import masked host OAuth into OpenCode; route Codex through the same proxy.
 #    Matching credentials/configs are untouched; existing local credentials are kept.
 # 11. Default OpenCode/Codex to GPT-6.1 Sol; use GPT-6 Luna for subagents.
+#     Connect both harnesses to the sandbox's host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access; report host recovery commands.
 #    Cache successful checks for unchanged setup; SBX_CHECK_AUTH=1 checks again.
 #    OpenAI checks model-list access, not inference; no agent tasks are started.
@@ -56,6 +57,7 @@ sbx_save_and_run() {
 # Install sandbox tools, tmux configuration and an initial resurrect snapshot,
 # login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
+# Connect OpenCode/Codex to the shared sandbox MCP gateway.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\n'
@@ -1373,6 +1375,7 @@ oauth_access=oai-oat01-proxy-managed
 oauth_refresh=oai-ort01-proxy-managed
 oauth_provider=sbx-chatgpt
 oauth_base_url=https://chatgpt.com/backend-api/codex
+mcp_gateway_url=http://mcp-gateway.docker.internal/mcp
 host_oauth=false
 stage_begin 'Host credentials' 'Checking proxy-managed OpenAI configuration'
 case ${SBX_CRED_OPENAI_MODE:-none} in
@@ -1468,7 +1471,7 @@ fi
 
 main_model=gpt-6.1-sol
 subagent_model=gpt-6-luna
-stage_begin 'OpenCode models' 'Checking main and subagent models'
+stage_begin 'OpenCode defaults' 'Checking shared models and MCP gateway'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 [[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
 # JSONC takes precedence when both files exist. Edit only the effective file.
@@ -1481,8 +1484,8 @@ if exists "$opencode_config"; then
         die "OpenCode configuration must be a readable regular file, not a symlink: $opencode_config"
 fi
 # Mask JSONC comments/trailing commas without shifting character offsets, then
-# replace only managed model settings. Other text, including comments, survives.
-python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" <<'SBX_OPENCODE_MODEL'
+# replace only managed model/gateway settings. Other text and comments survive.
+python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
 import re
@@ -1490,8 +1493,10 @@ import sys
 
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = ('openai/' + model for model in sys.argv[3:5])
+gateway_url = sys.argv[5]
 desired = {
     "model": main_model,
+    "mcp": {"mcp-gateway": {"type": "remote", "url": gateway_url, "enabled": True}},
     "agents": {
         "build": {"model": main_model},
         "plan": {"model": main_model},
@@ -1519,7 +1524,7 @@ if not isinstance(data, dict):
     sys.exit(f"OpenCode configuration must contain an object: {source}")
 
 # Walk only managed object paths, including duplicate keys, preserving other
-# agent settings and custom agents. Never replace an unexpected non-object.
+# agent/MCP settings and custom entries. Never replace an unexpected non-object.
 decoder = json.JSONDecoder()
 edits = []
 newline = '\r\n' if '\r\n' in original else '\n'
@@ -1531,7 +1536,7 @@ def skip_space(position):
 
 def update_object(start, wanted):
     if clean[start] != '{':
-        sys.exit(f"Expected an object for managed agent settings in {source}")
+        sys.exit(f"Expected an object for managed settings in {source}")
     position = start + 1
     seen = set()
     has_members = False
@@ -1586,11 +1591,11 @@ install_opencode_model() (
 )
 if [[ -f $work_dir/opencode-model.json ]]; then
     install_opencode_model
-    stage_done changed 'Main: GPT-6.1 Sol; subagents: GPT-6 Luna'
+    stage_done changed 'Sol/Luna defaults; shared MCP gateway'
 else
-    stage_done unchanged 'Sol main and Luna subagent defaults match'
+    stage_done unchanged 'Shared models and MCP gateway match'
 fi
-stage_begin 'Codex defaults' 'Checking shared models and host OAuth routing'
+stage_begin 'Codex defaults' 'Checking models, host OAuth and MCP gateway'
 codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
 [[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
 codex_config="$codex_config_dir/config.toml"
@@ -1598,10 +1603,10 @@ if exists "$codex_config"; then
     [[ -f $codex_config && -r $codex_config && ! -L $codex_config ]] ||
         die "Codex configuration must be a readable regular file, not a symlink: $codex_config"
 fi
-# TOMLKit preserves comments and unrelated settings, including MCP servers.
+# TOMLKit preserves comments and unrelated settings, including other MCP servers.
 # Parse before publishing; matching settings leave the existing file untouched.
 python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
-    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" <<'SBX_CODEX_MODEL'
+    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" <<'SBX_CODEX_MODEL'
 from pathlib import Path
 import sys
 import tomlkit
@@ -1609,6 +1614,7 @@ import tomlkit
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
 host_oauth, provider_id, base_url, access = sys.argv[5:9]
+gateway_url = sys.argv[9]
 original = source.read_text(encoding='utf-8') if source.exists() else ''
 try:
     config = tomlkit.parse(original)
@@ -1620,6 +1626,22 @@ agents = config['agents']
 if not isinstance(agents, (tomlkit.items.Table, tomlkit.items.InlineTable)):
     sys.exit(f'Codex agents settings must contain a table: {source}')
 changed = False
+if 'mcp_servers' not in config:
+    config['mcp_servers'] = tomlkit.table()
+servers = config['mcp_servers']
+if not isinstance(servers, (tomlkit.items.Table, tomlkit.items.InlineTable)):
+    sys.exit('Codex mcp_servers must be a table.')
+if 'mcp-gateway' not in servers:
+    servers['mcp-gateway'] = tomlkit.table()
+gateway = servers['mcp-gateway']
+if not isinstance(gateway, (tomlkit.items.Table, tomlkit.items.InlineTable)):
+    sys.exit('Codex mcp-gateway must be a table.')
+if 'command' in gateway:
+    sys.exit('Codex mcp-gateway uses stdio; refusing to replace user settings.')
+for key, value in (('url', gateway_url), ('enabled', True)):
+    if gateway.get(key) != value:
+        gateway[key] = value
+        changed = True
 for table, key, value in (
     (config, 'model', main_model),
     (agents, 'enabled', True),
@@ -1669,9 +1691,9 @@ install_codex_model() (
 )
 if [[ -f $work_dir/codex-model.toml ]]; then
     install_codex_model
-    stage_done changed 'Sol/Luna defaults; host OAuth routing when available'
+    stage_done changed 'Sol/Luna defaults; shared MCP gateway; OAuth when available'
 else
-    stage_done unchanged 'Shared models and provider settings match'
+    stage_done unchanged 'Shared models, provider and MCP gateway match'
 fi
 
 # Read-only credential probes. Successful results are cached by local setup,
