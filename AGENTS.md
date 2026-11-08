@@ -14,7 +14,6 @@
 
 # Roadmap features
 
-- broken pipe on codex select/copy
 - beautify script output
 - xwin startup question should skip on re-run if it's already deployed
 - tighten; clear the vibe coded slop; review claude comments
@@ -25,3 +24,4 @@
 
 - gh daemon restart; bug - sbx daemon must restart to enable gh cred passthrough on new win sandbox
 - MCP brokering; bug - must be configured outside the sandbox for every new sandbox
+- codex 'broken pipe' on select/copy - can't reproduce; INVEST
