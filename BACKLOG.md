@@ -16,3 +16,8 @@ Keep setup and troubleshooting details in [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md)
 
 - On the documented Windows setup, GitHub credentials may require a host `sbx daemon restart` after sandbox creation.
 - Each new sandbox requires host setup to attach the MCP gateway. The installer cannot attach it.
+
+# Working backlog
+
+- v2 mcp layout
+- tmux overwrite
