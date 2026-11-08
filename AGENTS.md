@@ -15,8 +15,10 @@
 # Roadmap features
 
 - desktop
-- tmux default tabs populated
 - docker escape testing
 - context7 MCP (via gateway)
 - tighten; clear the vibe coded slop
 - release/public
+- rsyslog
+- tmux mouse drag lines
+- codex deployment delay

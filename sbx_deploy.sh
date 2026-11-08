@@ -6,6 +6,7 @@
 # 4. Validate paths; install missing packages (cmatrix alone omits recommends).
 # 5. Install missing Codex CLI; download missing TPM/tmux-resurrect atomically.
 # 6. Back up/update tmux configuration; load plugins and verify bindings.
+#    Seed the bundled resurrect snapshot only without user saves; restore manually.
 # 7. Install UTF-8 tmux/btop wrappers, Bash PATH entries, and system aliases,
 #    including auth_all and individual OpenCode/Codex/GitHub auth with clipboard copying.
 #    Codex device login opens the browser with a manual URL fallback.
@@ -52,7 +53,8 @@ sbx_save_and_run() {
         # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
-# Install sandbox tools, tmux configuration, login helpers/terminal clipboard, and prompts;
+# Install sandbox tools, tmux configuration and an initial resurrect snapshot,
+# login helpers/terminal clipboard, and prompts;
 # default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
 SBX_SAVED_HEADER
@@ -695,6 +697,93 @@ for binding in /tpm/bindings/install_plugins /tmux-resurrect/scripts/{save,resto
     [[ "$all_bindings" == *"$binding"* ]] || die "Plugin binding did not load: $binding"
 done
 stage_done verified 'Plugin bindings loaded'
+
+# Ask the installed plugin for its effective directory, including custom options
+# and its legacy/XDG defaults. Do not change the supplied tmux configuration.
+stage_begin 'tmux snapshot' 'Checking saved resurrect state'
+resurrect_state_dir=$(
+    # Third-party helpers are not written for nounset.
+    set +u
+    source "$resurrect_dir/scripts/helpers.sh" || exit $?
+    resurrect_dir
+) || die 'Cannot resolve the tmux-resurrect save directory.'
+[[ $resurrect_state_dir == /* ]] || die 'tmux-resurrect save directory must be absolute.'
+seed_resurrect_snapshot() (
+    local state_dir=$1 seed=tmux_resurrect_sbx_default.txt saved staged= compare_status
+    trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    if exists "$state_dir"; then
+        [[ -d $state_dir && ! -L $state_dir ]] ||
+            die "Cannot seed a symlink or non-directory resurrect path: $state_dir"
+    fi
+    # Even dangling links, empty saves, and older snapshots without a last link
+    # belong to the user. Only our exact seed filename is eligible for recovery.
+    exists "$state_dir/last" && return 0
+    for saved in "$state_dir"/tmux_resurrect_*.txt; do
+        if exists "$saved" && [[ $saved != "$state_dir/$seed" ]]; then
+            return 0
+        fi
+    done
+    # Exact 725-byte export: six single-pane windows (cli, cli2, opencode,
+    # codex, btop, log), all in /c/repo/docker-sandbox-testrepo. This directory
+    # and application state are not bundled; normal resurrect process rules apply.
+    # Base64 preserves literal tabs and trailing fields through copy/paste.
+    base64 --decode > "$work_dir/resurrect-snapshot" <<'SBX_RESURRECT_SNAPSHOT'
+cGFuZQkwCTAJMAk6CTAJc2J4LW5ld25hbWV0ZXN0CTovYy9yZXBvL2RvY2tlci1zYW5kYm94LXRl
+c3RyZXBvCTEJYmFzaAk6CnBhbmUJMAkxCTAJOgkwCXNieC1uZXduYW1ldGVzdAk6L2MvcmVwby9k
+b2NrZXItc2FuZGJveC10ZXN0cmVwbwkxCWJhc2gJOgpwYW5lCTAJMgkwCToJMAlzYngtbmV3bmFt
+ZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNhbmRib3gtdGVzdHJlcG8JMQliYXNoCToKcGFuZQkwCTMJ
+MAk6CTAJc2J4LW5ld25hbWV0ZXN0CTovYy9yZXBvL2RvY2tlci1zYW5kYm94LXRlc3RyZXBvCTEJ
+YmFzaAk6CnBhbmUJMAk0CTEJOioJMAlzYngtbmV3bmFtZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNh
+bmRib3gtdGVzdHJlcG8JMQlidG9wCTovdXNyL2Jpbi9idG9wCnBhbmUJMAk1CTAJOi0JMAlzYngt
+bmV3bmFtZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNhbmRib3gtdGVzdHJlcG8JMQliYXNoCToKd2lu
+ZG93CTAJMAk6Y2xpCTAJOgliMTFkLDIwOXg1MCwwLDAsMAlvZmYKd2luZG93CTAJMQk6Y2xpMgkw
+CToJYjEyMywyMDl4NTAsMCwwLDYJb2ZmCndpbmRvdwkwCTIJOm9wZW5jb2RlCTAJOgliMTFlLDIw
+OXg1MCwwLDAsMQlvZmYKd2luZG93CTAJMwk6Y29kZXgJMAk6CWIxMWYsMjA5eDUwLDAsMCwyCW9m
+Zgp3aW5kb3cJMAk0CTpidG9wCTEJOioJY2IwMCwxMjB4MjksMCwwLDMJb2ZmCndpbmRvdwkwCTUJ
+OmxvZwkwCTotCWNiMDQsMTIweDI5LDAsMCw3CW9mZgpzdGF0ZQkwCQo=
+SBX_RESURRECT_SNAPSHOT
+    if exists "$state_dir/$seed"; then
+        # Resume only an unchanged installer seed, never a modified user file.
+        [[ -f $state_dir/$seed && ! -L $state_dir/$seed ]] || return 0
+        if cmp -s -- "$work_dir/resurrect-snapshot" "$state_dir/$seed"; then
+            :
+        else
+            compare_status=$?
+            (( compare_status == 1 )) || die 'Cannot compare the bundled tmux snapshot.' "$compare_status"
+            return 0
+        fi
+    else
+        (umask 077; mkdir -p -- "$state_dir")
+        staged=$(umask 077; mktemp -- "$state_dir/.sbx-seed.XXXXXX")
+        cat -- "$work_dir/resurrect-snapshot" > "$staged"
+        # Publish a complete file without replacing any existing destination.
+        ln -T -- "$staged" "$state_dir/$seed"
+        rm -f -- "$staged"
+        staged=
+        touch -- "$work_dir/changed"
+    fi
+    # A user save during installation takes precedence too.
+    exists "$state_dir/last" && return 0
+    for saved in "$state_dir"/tmux_resurrect_*.txt; do
+        if exists "$saved" && [[ $saved != "$state_dir/$seed" ]]; then
+            return 0
+        fi
+    done
+    if ln -sT -- "$seed" "$state_dir/last"; then
+        touch -- "$work_dir/changed"
+    else
+        compare_status=$?
+        exists "$state_dir/last" || die 'Cannot publish the tmux snapshot last link.' "$compare_status"
+    fi
+)
+seed_resurrect_snapshot "$resurrect_state_dir"
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Seeded snapshot; in tmux press Ctrl-b, then Ctrl-r'
+else
+    stage_done unchanged 'Existing resurrect state preserved'
+fi
 
 stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
 tmux_wrapper="$HOME/.local/bin/tmux"
