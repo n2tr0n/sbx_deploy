@@ -17,7 +17,6 @@
 - desktop
 - context7 MCP (via gateway)
 - rsyslog
-- tmux mouse drag lines
 - codex deployment delay
 - tighten; clear the vibe coded slop
 - release/public
