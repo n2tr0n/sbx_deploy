@@ -155,7 +155,9 @@ Do not add token bindings for Azure tunnel domains. Use the tunnel's sign-in flo
 
 ## Optional Webtop desktop
 
-Check registry access in **host PowerShell**:
+Webtop downloads require access to `lscr.io:443`. Before selecting Yes in the
+installer, check registry access in **host PowerShell**. Add an allow rule only
+if no allow rule matches:
 
 ```powershell
 sbx policy check network lscr.io:443

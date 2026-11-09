@@ -3373,8 +3373,18 @@ if [[ $webtop_choice == y ]]; then
     stage_operation 'Creating Ubuntu XFCE desktop (first download may take time)'
     # Docker reuses a local image; never pull/update it on an identical rerun.
     # If a failed start leaves a matching container, use docker start webtop.
-    docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
-        -p 3001:3001 -v webtop-config:/config "$webtop_image"
+    if docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
+        -p 3001:3001 -v webtop-config:/config "$webtop_image" 2>&1 | tee -- "$work_dir/webtop-start.output"; then
+        :
+    else
+        status=$?
+        if grep -Fq '403 Forbidden' "$work_dir/webtop-start.output"; then
+            record_issue webtop-registry 'Webtop registry access' \
+                'Registry access returned 403 Forbidden. The host network policy can block Webtop downloads.' \
+                $'Windows PowerShell:\n  sbx policy check network lscr.io:443\nIf no allow rule matches:\n  sbx policy allow network lscr.io:443\nThis changes the global policy. An explicit deny takes precedence.\nSee HOST_SETUP_WIN.md for other registry domains.\nSandbox Bash after repair:\n  bash ~/sbx_local_opencode_deploy.sh'
+        fi
+        die 'Webtop could not start; see the Docker error and final actions.' "$status"
+    fi
     webtop_status=running
     stage_done changed 'Deployed Ubuntu XFCE desktop'
 elif [[ -n $webtop_id ]]; then
