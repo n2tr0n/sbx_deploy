@@ -12,3 +12,7 @@ credentials out of logs and shared output.
   both harnesses. Check the desktop helper's terminal output. New tmux snapshots
   must use session name `sbx` and the caller's home directory. Keep user saves.
 
+# Feature roadmap
+
+- enable a module system
+- add RTK and Superpowers support

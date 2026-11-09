@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
-# Lock and save the installer. Confirm the hostname before deployment.
-# Install missing tools, Codex, TPM/tmux-resurrect, and the headless VS Code CLI.
-# Update owned shell helpers, prompts, syslog, and tmux files. Preserve user edits.
-# Seed the tmux layout only without user saves. --tmux-redeploy restores supplied settings.
-# Share models, host OAuth, and MCP defaults across harnesses. Keep saved login choices.
-# Cache upgrades and auth checks. SBX_CHECK_AUTH=1 rechecks; OpenAI checks exclude inference.
-# Offer Webtop. Set up the optional tunnel separately with vscode_tunnel.
-# Show compact stages, live APT progress, recovery commands, and five private run logs.
-# SBX_VERBOSE=1 shows command output. Stop on errors; clean up after interruption.
-# Paste the entire file into Bash. Rerun with: bash ~/sbx_local_opencode_deploy.sh
-# Save before deployment. The literal payload remains data until Bash parses the outer block.
+# Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
+# Rerun: bash ~/sbx_local_opencode_deploy.sh
+# --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 {
 (
 set -euo pipefail
@@ -69,14 +63,11 @@ sbx_save_and_run() {
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
-# Lock and save the installer. Confirm the hostname before deployment.
-# Install missing tools, Codex, TPM/tmux-resurrect, and the headless VS Code CLI.
-# Preserve user edits and saved logins. Update owned shell, syslog, and tmux files.
-# Share models, host OAuth, and MCP defaults. Seed tmux only without user saves.
-# Cache upgrades and auth checks. SBX_CHECK_AUTH=1 rechecks; OpenAI checks exclude inference.
-# Offer Webtop. Set up the optional tunnel separately with vscode_tunnel.
-# Show stages and recovery commands. Keep five logs; SBX_VERBOSE=1 shows command output.
-# Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_local_opencode_deploy.sh
+# Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
+# Rerun: bash ~/sbx_local_opencode_deploy.sh
+# --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
         printf '%s\n' 'sbx_child_shell=false' \

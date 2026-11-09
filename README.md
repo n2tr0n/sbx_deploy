@@ -1,27 +1,30 @@
 # SBX Deploy
 
-SBX Deploy is a Bash installer for local
-[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`)
-created with the `opencode` sandbox type.
+One installer for OpenCode and Codex in local
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/).
 
-`sbx_local_opencode_deploy.sh` installs sandbox tools, tmux, TPM, tmux-resurrect, UTF-8 wrappers,
-and Bash aliases. It configures OpenCode and Codex for host credentials and the MCP gateway.
+A coding sandbox your AI agent can set up, make yours, and maintain—with Docker
+support, host-managed credentials, and layered network security.
 
-To use other harnesses or providers, fork this project. Ask your coding agent to
-update the installer and authentication instructions for your requirements.
+- Use either OpenCode or Codex to fix and deploy the other's setup.
+- Switch between them with shared models, tools, and authentication defaults.
+- Save and restore terminal sessions with tmux.
+- Work in the terminal, VS Code, or an optional desktop.
+- Track deployment progress. Use run logs to diagnose failures.
+- Skip completed setup on reruns. Keep your edits and saved logins.
 
-**Experimental public alpha.**
-Tested on Windows hosts only. See [BACKLOG.md](BACKLOG.md) for known issues.
+**Experimental public alpha. Tested on Windows hosts only.**
+Check [known issues](BACKLOG.md) before deployment.
 
-## Run
+## Get started
 
-- Complete the Windows host setup in [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md).
-- Inside the sandbox, use the default user with passwordless sudo.
-- Paste the **entire script** into sandbox Bash.
-- Press Enter and follow the prompts.
-- Read the final output for host setup and verification steps.
+1. Complete the [Windows host setup](HOST_SETUP_WIN.md). Use an `opencode` sandbox.
+2. Review [the installer](sbx_local_opencode_deploy.sh). To customize, fork the
+   project on your host and ask your AI agent to adapt it. Review its changes.
+3. Paste the **entire file** into sandbox Bash as the default user with
+   passwordless sudo. Follow the prompts.
 
-Licensed under [MIT-0](LICENSE). Review the script before use.
+Licensed under [MIT-0](LICENSE).
 See [SECURITY.md](SECURITY.md) to report security issues.
 Third-party software and services remain subject to their respective licenses and terms.
 
