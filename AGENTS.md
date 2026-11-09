@@ -1,5 +1,6 @@
 # SBX Deploy
 
+- If `AGENTS.local.md` exists beside this file, read it and apply its additional instructions.
 - Maintain `sbx_local_opencode_deploy.sh` as a Bash installer for local SBX sandboxes of type `opencode`.
 - Read [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for Windows credentials, bindings, and proxy troubleshooting. Update it when host requirements change.
 - Run the installer inside the sandbox. Document Windows host actions in `HOST_SETUP_WIN.md`. Do not perform them from the installer.
