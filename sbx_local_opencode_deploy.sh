@@ -9,6 +9,10 @@
 # 3. Check paths. Install missing packages; omit recommended packages for cmatrix only.
 # 4. Install missing Codex with download, install, and version time limits.
 #    Download missing TPM/tmux-resurrect atomically.
+#    Install the headless VS Code CLI and vscode_tunnel setup alias.
+#    Supply an opt-in supervisor for the separate host-registered startup kit.
+#    Copy the VS Code device code and open the host browser during tunnel sign-in.
+#    Show boxed status with vscode_status. Stop automatic startup with vscode_disable.
 # 5. Start rsyslog and log rotation on Bash startup, including after restarts.
 #    Limit the logging lock wait to five seconds. Warn and continue shell startup.
 # 6. Install tmux configuration; upgrade only unchanged deployment files.
@@ -34,6 +38,7 @@
 # 14. Clean up. Show results, recovery actions, checks, desktop access, and log path.
 #     Show host daemon restart and Context7 attachment commands.
 #     Refresh pasted or sourced interactive shells after success.
+#     Show the VS Code tunnel setup command in a separate information box.
 #
 # Paste the entire file into Bash. Rerun with: bash ~/sbx_local_opencode_deploy.sh
 # Save before deployment. The literal payload remains data until Bash parses the outer block.
@@ -109,6 +114,9 @@ sbx_save_and_run() {
 # Limit the logging lock wait to five seconds. Warn and continue shell startup.
 # Ask about Webtop only without its container; preserve existing desktop state/data.
 # Run desktop for boxed status, browser access and host reconnection commands.
+# Install the headless VS Code CLI and tunnel setup, status, and disable aliases.
+# Keep tunnel setup and login outside deployment and run logs.
+# Copy the tunnel device code and open the host browser during sign-in.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_local_opencode_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
@@ -717,6 +725,28 @@ finish_installer() {
         fi
         summary_text ''
         summary_end
+        summary_begin 'VS CODE TUNNEL' "$green"
+        summary_text ''
+        summary_text 'Sandbox Bash - set up remote access:'
+        summary_command vscode_tunnel
+        summary_text 'Accepts the server license terms. Complete browser sign-in if requested.' "$muted"
+        summary_text 'Copies the device code and opens the sign-in page on the host.' "$muted"
+        summary_text 'Enables the background tunnel with its saved VS Code login.' "$muted"
+        summary_command vscode_status 'Check the connection'
+        summary_command vscode_disable 'Stop and disable automatic startup'
+        summary_text ''
+        summary_text 'Windows PowerShell - attach the startup kit once:'
+        summary_command "sbx kit add $host_sandbox_arg ./kits/vscode-tunnel"
+        summary_text 'Run from the SBX Deploy repository. Kit attachment restarts the sandbox.' "$muted"
+        summary_text 'Attach before tunnel setup. See HOST_SETUP_WIN.md for checks.' "$muted"
+        if (( EUID != 1000 )); then
+            summary_text "For this caller, add --kit-arg user=$EUID to the host command." "$amber"
+        fi
+        summary_text ''
+        summary_text 'Connect from Windows VS Code:'
+        summary_text 'VS Code > Remote Tunnels: Connect to Tunnel' "$muted"
+        summary_text ''
+        summary_end
         summary_begin 'POST DEPLOYMENT COMMANDS' "$green"
         summary_text ''
         summary_text 'Windows PowerShell: run in this order for a new sandbox.'
@@ -1125,6 +1155,48 @@ queue_helper() {
     queue_managed_file "$target" "$desired"
 }
 
+stage_begin 'VS Code' 'Checking headless CLI'
+vscode_binary="$HOME/.local/lib/sbx-deploy/vscode-code"
+if exists "$vscode_binary"; then
+    [[ -f $vscode_binary && -x $vscode_binary && ! -L $vscode_binary ]] ||
+        die "VS Code CLI path is unusable: $vscode_binary; preserve it, then restore a regular executable or move it before retrying."
+else
+    case $(uname -m) in
+        x86_64) vscode_platform=cli-linux-x64 ;;
+        aarch64|arm64) vscode_platform=cli-linux-arm64 ;;
+        *) die 'The headless VS Code CLI requires Linux x64 or ARM64.' ;;
+    esac
+    stage_operation "Downloading VS Code CLI (${download_seconds}s limit)"
+    if timeout --kill-after="${kill_seconds}s" "${download_seconds}s" \
+        curl -fsSL --connect-timeout 10 --max-time "$download_seconds" \
+        -o "$work_dir/vscode-cli.tar.gz" \
+        "https://update.code.visualstudio.com/latest/$vscode_platform/stable"; then
+        :
+    else
+        status=$?
+        die 'VS Code CLI download failed; check sandbox network/proxy access.' "$status"
+    fi
+    # Extract only the executable into the private workspace. Ignore archive paths.
+    stage_operation 'Checking downloaded VS Code CLI'
+    timeout --kill-after="${kill_seconds}s" "${install_seconds}s" \
+        tar -xOf "$work_dir/vscode-cli.tar.gz" code > "$work_dir/vscode-code"
+    chmod 755 -- "$work_dir/vscode-code"
+    timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+        "$work_dir/vscode-code" --version </dev/null
+    timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+        "$work_dir/vscode-code" tunnel --help </dev/null > "$work_dir/vscode-tunnel-help"
+    # Publish only a complete, checked binary. Keep user authentication unchanged.
+    install_managed_file "$vscode_binary" "$work_dir/vscode-code"
+fi
+stage_operation 'Checking installed VS Code CLI'
+timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+    "$vscode_binary" --version </dev/null
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Installed headless CLI; set up with vscode_tunnel'
+else
+    stage_done unchanged 'CLI present; tunnel login and settings preserved'
+fi
+
 # Add facility.severity tags to sandbox syslog. Preserve routing and rotation rules.
 # Start with the first Bash session after restart. Earlier boot messages can be missed.
 # https://docs.docker.com/ai/sandboxes/usage/#set-environment-variables
@@ -1372,6 +1444,254 @@ else
 fi
 
 stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
+vscode_contents() {
+    cat <<'SBX_VSCODE'
+#!/usr/bin/env bash
+# Set up the tunnel once. The SBX startup kit restarts the enabled supervisor.
+set -euo pipefail
+umask 077
+binary="$HOME/.local/lib/sbx-deploy/vscode-code"
+state="$HOME/.local/state/sbx-deploy/vscode-tunnel"
+mode=${1:---setup}
+case $mode in
+    --setup|--login|--run|--status|--disable|--foreground) ;;
+    *) printf 'Usage: vscode_tunnel [--setup|--login|--status|--disable|--foreground]\n' >&2; exit 2 ;;
+esac
+(( $# <= 1 )) || { printf 'Use one tunnel command at a time.\n' >&2; exit 2; }
+if [[ $mode == --status ]]; then
+    exec "$HOME/.local/lib/sbx-deploy/vscode-status"
+fi
+# An unused startup kit must make no files or network requests.
+if [[ $mode == --run && ! -e $state/enabled ]]; then exit 0; fi
+for path in "$HOME/.local" "$HOME/.local/state" "$HOME/.local/state/sbx-deploy" "$state" "$state/cli"; do
+    if [[ -L $path || ( -e $path && ( ! -d $path || ! -O $path ) ) ]]; then
+        printf 'Unsafe tunnel state directory: %s. Preserve it and repair ownership or links.\n' "$path" >&2
+        exit 1
+    fi
+done
+if [[ ! -f $binary || ! -x $binary || -L $binary ]]; then
+    printf 'VS Code CLI is missing or unusable. Rerun the SBX installer.\n' >&2
+    exit 1
+fi
+mkdir -p -- "$state"
+for file in enabled setup.lock run.lock last-exit; do
+    if [[ -L $state/$file || ( -e $state/$file && ( ! -f $state/$file || ! -O $state/$file ) ) ]]; then
+        printf 'Unsafe tunnel state file: %s. Preserve it and repair it before retrying.\n' "$state/$file" >&2
+        exit 1
+    fi
+done
+# Keep this helper's login separate from the default VS Code keyring entry.
+export VSCODE_CLI_USE_FILE_KEYCHAIN=1
+cli=("$binary" --cli-data-dir "$state/cli")
+case $mode in
+    --disable)
+        exec 8> "$state/setup.lock"
+        flock -w 5 8
+        rm -f -- "$state/enabled"
+        # The CLI uses local IPC in this private data directory.
+        if timeout --kill-after=5s 15s "${cli[@]}" tunnel kill; then :; else
+            printf 'No active tunnel stopped. The supervisor will exit within 30 seconds.\n'
+        fi
+        exit 0
+        ;;
+    --foreground)
+        exec "${cli[@]}" tunnel --accept-server-license-terms
+        ;;
+    --run)
+        exec 9> "$state/run.lock"
+        if flock -n 9; then :; else
+            result=$?
+            if (( result == 1 )); then exit 0; fi
+            printf 'Cannot lock the tunnel supervisor.\n' >&2
+            exit "$result"
+        fi
+        child=
+        cleanup() {
+            trap - EXIT INT TERM
+            if [[ -n $child ]]; then
+                kill "$child" 2>/dev/null || :
+                wait "$child" 2>/dev/null || :
+            fi
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        while [[ -f $state/enabled ]]; do
+            # Use the saved login. Keep runtime and sign-in output out of all logs.
+            "${cli[@]}" tunnel --accept-server-license-terms </dev/null >/dev/null 2>&1 9>&- &
+            child=$!
+            result=0
+            wait "$child" || result=$?
+            child=
+            printf '%s\n' "$result" > "$state/last-exit"
+            [[ -f $state/enabled ]] || break
+            sleep 30 9>&- &
+            child=$!
+            wait "$child"
+            child=
+        done
+        exit 0
+        ;;
+esac
+# Setup is explicit and interactive. Never read pending pasted commands.
+exec 8> "$state/setup.lock"
+flock -w 5 8
+if [[ $mode == --login ]] || ! timeout --kill-after=5s 15s "${cli[@]}" tunnel user show >/dev/null 2>&1; then
+    if ! { exec 7<> /dev/tty; } 2>/dev/null; then
+        printf 'Tunnel sign-in needs a terminal. Run: vscode_tunnel\n' >&2
+        exit 1
+    fi
+    "$HOME/.local/lib/sbx-deploy/auth-vscode-browser-tty" \
+        "${cli[@]}" tunnel user login --provider github <&7 >&7 2>&7
+fi
+# Enable only after successful login. Preserve existing authentication and settings.
+if [[ ! -f $state/enabled ]]; then : > "$state/enabled"; fi
+# The startup kit uses the same lock. A second supervisor exits without a tunnel.
+if [[ $mode == --login ]]; then
+    if timeout --kill-after=5s 15s "${cli[@]}" tunnel kill >/dev/null 2>&1; then :; fi
+fi
+nohup /usr/bin/env -u BASH_ENV /bin/bash "$0" --run </dev/null >/dev/null 2>&1 7>&- 8>&- &
+exec 9> "$state/run.lock"
+started=false
+for attempt in {1..30}; do
+    if flock -n 9; then
+        flock -u 9
+    else
+        result=$?
+        if (( result == 1 )); then started=true; break; fi
+        printf 'Cannot check the tunnel supervisor lock.\n' >&2
+        exit "$result"
+    fi
+    sleep 0.1
+done
+if [[ $started != true ]]; then
+    printf 'Tunnel supervisor did not start. Inspect with: vscode_tunnel --foreground\n' >&2
+    exit 1
+fi
+printf 'Tunnel startup enabled. The background supervisor will connect now.\n'
+printf 'Check connection: vscode_status\n'
+printf 'Connect in VS Code: Remote Tunnels: Connect to Tunnel\n'
+printf 'For automatic restart, attach the Windows host startup kit once. See HOST_SETUP_WIN.md.\n'
+printf 'Stop and disable: vscode_disable\n'
+
+SBX_VSCODE
+}
+queue_helper "$HOME/.local/bin/sbx_vscode" vscode_contents
+vscode_status_contents() {
+    cat <<'SBX_VSCODE_STATUS'
+#!/usr/bin/env python3
+"""Show local tunnel status. Do not change files, authenticate, or log output."""
+import fcntl
+import json
+import locale
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import textwrap
+
+if len(sys.argv) != 1:
+    sys.exit('Usage: vscode_status')
+state = Path.home() / '.local/state/sbx-deploy/vscode-tunnel'
+binary = Path.home() / '.local/lib/sbx-deploy/vscode-code'
+width = max(32, min(80, shutil.get_terminal_size((80, 24)).columns))
+boxed = width >= 60
+utf8 = locale.getpreferredencoding(False).lower().replace('-', '') == 'utf8'
+color = sys.stdout.isatty() and os.environ.get('TERM', 'dumb') != 'dumb' and 'NO_COLOR' not in os.environ
+green, amber, muted, reset = ('\033[32m', '\033[33m', '\033[90m', '\033[0m') if color else ('', '', '', '')
+vertical, horizontal = ('│', '─') if utf8 else ('|', '-')
+corners = ('┌', '┐', '└', '┘') if utf8 else ('+', '+', '+', '+')
+
+def line(text='', style='', literal=False):
+    rows = [text] if literal else textwrap.wrap(text, width=width - 4) or ['']
+    for row in rows:
+        if boxed and len(row) <= width - 4:
+            print(f'{muted}{vertical}{reset} {style}{row}{reset}{" " * (width - 4 - len(row))} {muted}{vertical}{reset}')
+        else:
+            print(f'  {style}{row}{reset}')
+
+enabled = running = False
+connection, name, last_exit, problem, status = 'Not configured', None, None, None, 0
+try:
+    for path in (state.parent.parent.parent, state.parent.parent, state.parent, state, state / 'cli'):
+        if path.is_symlink() or (path.exists() and (not path.is_dir() or path.stat().st_uid != os.geteuid())):
+            raise ValueError('Unsafe tunnel state directory. Preserve it and repair ownership or links.')
+    if state.exists():
+        for filename in ('enabled', 'run.lock', 'last-exit'):
+            path = state / filename
+            if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != os.geteuid())):
+                raise ValueError('Unsafe tunnel state file. Preserve it and repair it before retrying.')
+        enabled = (state / 'enabled').is_file()
+        if (state / 'run.lock').is_file():
+            fd = os.open(state / 'run.lock', os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    running = True
+            finally:
+                os.close(fd)
+        if (state / 'last-exit').is_file():
+            value = (state / 'last-exit').read_text().strip()
+            last_exit = value if re.fullmatch(r'[0-9]{1,3}', value) else 'Unknown'
+        if not (state / 'cli').is_dir():
+            connection = 'Not configured'
+        else:
+            if not binary.is_file() or binary.is_symlink() or not os.access(binary, os.X_OK):
+                raise ValueError('VS Code CLI is missing or unusable. Rerun the SBX installer.')
+            result = subprocess.run(['timeout', '--kill-after=5s', '15s', str(binary),
+                                     '--cli-data-dir', str(state / 'cli'), 'tunnel', 'status'],
+                                    env={**os.environ, 'VSCODE_CLI_USE_FILE_KEYCHAIN': '1'},
+                                    capture_output=True, text=True)
+            if result.returncode:
+                status = result.returncode if result.returncode > 0 else 128 - result.returncode
+                raise ValueError(f'Local status check failed (exit {status}).')
+            data = json.loads(result.stdout)
+            if not isinstance(data, dict) or 'tunnel' not in data:
+                raise ValueError('Unsupported VS Code status response.')
+            tunnel = data['tunnel']
+            connection = 'Stopped'
+            if tunnel is not None:
+                if not isinstance(tunnel, dict) or tunnel.get('tunnel') not in ('Connected', 'Disconnected'):
+                    raise ValueError('Unsupported VS Code connection state.')
+                connection = tunnel['tunnel']
+                candidate = tunnel.get('name')
+                if isinstance(candidate, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', candidate):
+                    name = candidate
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    connection = 'Check needed'
+    problem = str(error) if isinstance(error, ValueError) and not isinstance(error, json.JSONDecodeError) else 'Local status unavailable. Run vscode_tunnel --foreground to investigate.'
+    status = status or 1
+
+print()
+if boxed:
+    print(muted + corners[0] + horizontal * (width - 2) + corners[1] + reset)
+line('VS CODE TUNNEL', green if connection == 'Connected' else amber)
+line()
+line('Connection: ' + connection, green if connection == 'Connected' else amber)
+line('Automatic startup: ' + ('Enabled; host startup kit required' if enabled else 'Disabled'))
+line('Supervisor: ' + ('Running' if running else 'Stopped'))
+if name:
+    line('Tunnel: ' + name)
+    if connection == 'Connected':
+        line('https://vscode.dev/tunnel/' + name, literal=True)
+if last_exit is not None:
+    line('Last tunnel exit: ' + last_exit, muted)
+if problem:
+    line(problem, amber)
+line()
+line('vscode_tunnel              Set up or start', literal=True)
+line('vscode_tunnel --login      Authorize again', literal=True)
+line('vscode_disable            Stop and disable', literal=True)
+if boxed:
+    print(muted + corners[2] + horizontal * (width - 2) + corners[3] + reset)
+print()
+sys.exit(status)
+SBX_VSCODE_STATUS
+}
+queue_helper "$HOME/.local/lib/sbx-deploy/vscode-status" vscode_status_contents
 tmux_wrapper="$HOME/.local/bin/tmux"
 wrapper_contents() {
     cat <<'TMUX_WRAPPER'
@@ -1909,7 +2229,7 @@ SBX_DESKTOP
 }
 queue_helper "$HOME/.local/bin/desktop" desktop_contents
 
-# Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
+# Private adapter for login helpers. Leave desktop clipboard tools unchanged.
 gh_clipboard_contents() {
     cat <<'SBX_GH_CLIPBOARD'
 #!/bin/sh
@@ -1950,6 +2270,12 @@ import tempfile
 SBX_OPENAI_AUTH
     if [[ ${1-} == codex ]]; then
         printf '%s\n' "command = ['codex', '-c', 'model_provider=\"openai\"', '-c', 'forced_login_method=\"chatgpt\"', 'login', '--device-auth']"
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_AUTH_COMMAND'
+command = sys.argv[1:]
+if not command:
+    sys.exit('Use vscode_tunnel to start tunnel sign-in.')
+SBX_VSCODE_AUTH_COMMAND
     else
         cat <<'SBX_OPENAI_COMMAND'
 command = [opencode_binary, 'auth', 'login', 'openai',
@@ -1962,6 +2288,10 @@ ansi = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
 SBX_OPENAI_AUTH
     if [[ ${1-} == codex ]]; then
         printf '%s\n' "code_pattern = re.compile(rb'\b([A-Z0-9]{4,8}-[A-Z0-9]{4,8})\b')"
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_AUTH_PATTERN'
+code_pattern = re.compile(rb'\b(?:use|enter)(?: the)? code[: \t]+([A-Z0-9]{4}-[A-Z0-9]{4})(?![A-Z0-9-])', re.I)
+SBX_VSCODE_AUTH_PATTERN
     else
         cat <<'SBX_OPENAI_PATTERN'
 code_pattern = re.compile(rb'Enter code:[ \t]*([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)(?=[ \t\r\n])')
@@ -2029,6 +2359,17 @@ SBX_OPENAI_AUTH
             except (OSError, subprocess.SubprocessError):
                 print(f'Open this URL in your browser: {url}', flush=True)
 SBX_CODEX_BROWSER
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_BROWSER'
+            # SBX's bridge opens the Windows host browser. Never open a local desktop browser.
+            url = 'https://github.com/login/device'
+            try:
+                subprocess.run(['/usr/local/bin/xdg-open', url],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, check=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                print(f'Open this URL in your host browser: {url}', flush=True)
+SBX_VSCODE_BROWSER
     fi
     cat <<'SBX_OPENAI_AUTH'
     status = process.wait()
@@ -2089,6 +2430,8 @@ SBX_OPENAI_AUTH
 queue_helper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
 codex_auth_contents() { openai_auth_contents codex; }
 queue_helper "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" codex_auth_contents
+vscode_auth_contents() { openai_auth_contents vscode; }
+queue_helper "$HOME/.local/lib/sbx-deploy/auth-vscode-browser-tty" vscode_auth_contents
 
 # Interactive definitions live in one owned file; startup files hold loaders.
 {
@@ -2116,6 +2459,12 @@ alias configcat='grep -Ev "^$|^#"'
 # Netstat aliases
 alias netstat-numeric='netstat -tulpn'
 alias netstat-names='netstat -tulp'
+
+# Set up authentication and enable automatic tunnel startup.
+alias vscode_tunnel='"$HOME/.local/bin/sbx_vscode"'
+alias vscode_status='"$HOME/.local/bin/sbx_vscode" --status'
+alias vscode_disable='"$HOME/.local/bin/sbx_vscode" --disable'
+
 
 # SBX Deploy: GitHub browser login
 auth_gh() {

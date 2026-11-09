@@ -1,0 +1,21 @@
+schemaVersion: "2"
+kind: mixin
+name: sbx-vscode-tunnel
+description: Start the enabled SBX Deploy VS Code tunnel on each sandbox start.
+args:
+  user:
+    default: "1000"
+    description: Sandbox user who runs the installer and tunnel setup.
+    pattern: '^[a-zA-Z0-9_-]+$'
+setup:
+  startup:
+    - command:
+        - /usr/bin/env
+        - -u
+        - BASH_ENV
+        - /bin/bash
+        - -c
+        - 'if [ -x "$HOME/.local/bin/sbx_vscode" ]; then exec "$HOME/.local/bin/sbx_vscode" --run; fi'
+      user: "${{ kit.args.user }}"
+      background: true
+      description: Run the tunnel only after the user enables it.

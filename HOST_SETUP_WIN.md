@@ -79,6 +79,101 @@ sbx mcp load context7 --sandbox <sandbox-name>
 Attachments survive restarts. Alternatively, use `--static-mcp context7`
 during sandbox creation.
 
+## Headless VS Code tunnel
+
+The installer installs Microsoft's standalone VS Code CLI and the
+`vscode_tunnel` alias. The final information box shows the setup commands.
+Run the alias in sandbox Bash after deployment. It signs in when needed,
+accepts the VS Code Server license terms, and starts a background supervisor.
+The supervisor retries after a tunnel exit. A lock prevents duplicate supervisors.
+Sign-in and runtime output stay outside deployment logs.
+During sign-in, the helper copies the device code to the terminal clipboard.
+It then uses the SBX browser bridge to open the GitHub device page on Windows.
+If copying fails, copy the displayed code manually. If browser opening fails,
+open the displayed URL. The terminal must support clipboard forwarding (OSC 52).
+Inside tmux, clipboard copying uses the existing tmux clipboard settings.
+
+If the host page does not open, check `sbx settings get browser.enabled` in
+**host PowerShell**. If it is false and you want browser forwarding, run
+`sbx settings set browser.enabled true`. This is a global SBX setting.
+The installer does not change it. See the
+[Docker browser setting](https://docs.docker.com/ai/sandboxes/configuration/settings/#browserenabled).
+
+### One-time startup registration
+
+The standard sandbox runs `sh` as PID 1. It has no active systemd manager.
+`/etc/sandbox-persistent.sh` runs on Bash startup, not at sandbox boot.
+Use the supplied SBX startup kit for restart support.
+
+In **host PowerShell**, from the SBX Deploy repository, check the sandbox's kit
+list with `sbx inspect <sandbox-name>`. Skip attachment if `sbx-vscode-tunnel`
+is already present. Inspect the kit, then attach it only if absent:
+
+```powershell
+sbx kit validate ./kits/vscode-tunnel --offline
+sbx kit inspect ./kits/vscode-tunnel --offline
+sbx kit add <sandbox-name> ./kits/vscode-tunnel
+```
+
+Kit attachment recreates the sandbox container and interrupts sessions.
+Save open work first. Attach the kit before tunnel setup. Then rerun the installer
+inside the sandbox if required. Run the installer and `vscode_tunnel` as `agent`
+(UID 1000). For another user, supply `--kit-arg user=<user-or-uid>` when you
+validate, inspect, and attach the kit. Use the same user for all tunnel commands.
+If the installed SBX version rejects startup kits or container recreation, stop
+and keep the existing sandbox. Do not reset it. Check `sbx kit add --help`.
+
+The startup kit makes no files or network requests until tunnel setup is enabled.
+It starts the enabled supervisor on each sandbox start without a shell login.
+Attaching the kit does not start a stopped sandbox after a Windows reboot.
+Start that sandbox with `sbx start <sandbox-name>`; its tunnel then starts too.
+
+### Tunnel setup and control
+
+In **sandbox Bash**, after deployment:
+
+```bash
+vscode_tunnel
+vscode_status
+# To stop the tunnel and disable automatic startup:
+# vscode_disable
+```
+
+Use the same GitHub account in Windows VS Code. Install **Remote - Tunnels**.
+Run **Remote Tunnels: Connect to Tunnel**. `vscode_status` shows a status box
+with the connection state, startup setting, supervisor state, and tunnel name.
+It shows a browser URL when connected. `vscode_tunnel --status` gives the same
+output. Status checks do not start the tunnel or sign in.
+No sandbox port mapping is required.
+
+The helper stores its own CLI login under
+`~/.local/state/sbx-deploy/vscode-tunnel/cli`. The directory is private. The CLI
+uses a file credential store with mode 600, separate from its default keyring.
+It preserves existing VS Code and `gh` logins. It does not import host credential placeholders. Run
+`vscode_tunnel --foreground` to show a connection URL or investigate a failed
+connection. Stop the background tunnel first with `vscode_disable`.
+Press Ctrl+C to stop a foreground tunnel. Run `vscode_tunnel` to enable startup
+again. For expired or revoked authorization, run `vscode_tunnel --login` to authorize
+again. This explicit command can replace the tunnel helper's saved login.
+Automatic startup continues until disabled; disable can take up to 30 seconds.
+
+An unchanged deployment skips CLI downloads and settings writes. Tunnel setup
+runs only when requested. Tunnel runtime can use the network and download
+VS Code Server updates. OpenCode and Codex keep their shared models,
+authentication, and MCP settings. VS Code AI extensions need separate setup.
+
+If a connection fails, check the sandbox proxy policy from **host PowerShell**.
+Use `sbx policy check network <domain>:443`. Allow a required domain only when
+no allow rule matches. Downloads need `update.code.visualstudio.com` and
+`vscode.download.prss.microsoft.com`. Tunnels also need GitHub or Microsoft
+sign-in endpoints and the Azure tunnel endpoints listed in
+[Microsoft's network requirements](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
+Keep real tokens out of command output. Do not add token bindings for Azure
+tunnel domains. Host-managed tunnel authentication needs separate validation.
+
+[VS Code Remote Tunnels guide](https://code.visualstudio.com/docs/remote/tunnels),
+[Docker startup kit reference](https://docs.docker.com/ai/sandboxes/customize/kits-v2/#startup)
+
 ## Optional Webtop desktop
 
 Check registry access in **host PowerShell**:
