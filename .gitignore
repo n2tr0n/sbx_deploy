@@ -5,3 +5,6 @@ __pycache__/
 
 # Local instructions.
 /AGENTS.local.md
+
+# Local temporary files
+.release-check/
