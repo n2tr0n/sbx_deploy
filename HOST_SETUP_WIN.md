@@ -2,7 +2,9 @@
 
 For local Docker Sandboxes (`sbx`) of type `opencode`, run host commands in
 **Windows PowerShell**.
-Real credentials stay in the host keychain. Sandbox files contain placeholders.
+With host-managed authentication, real credentials stay in the host keychain.
+Sandbox files contain placeholders. Explicit local logins can store real
+credentials inside the sandbox.
 The installer cannot configure or restart the host. Keep host settings outside
 sandbox-mounted workspaces. Never put real tokens in logs or chat.
 
@@ -47,6 +49,25 @@ bindings:
 ```
 
 These settings survive sandbox recreation.
+
+### Authentication choices on rerun
+
+The installer uses host OAuth when no saved local choice exists.
+OpenCode keeps the saved OpenAI credential selection. This includes an inactive
+managed credential. Codex keeps an explicit provider. If its provider is unset
+and `auth.json` exists, the installer keeps the built-in provider.
+The installer does not read that file to check whether its login is valid.
+
+Local login helpers are explicit overrides. A successful Codex local login
+selects the built-in OpenAI provider. Host proxy substitution can still apply.
+Do not copy real tokens into the managed provider or placeholder files.
+
+Preservation fixture tests pass. Sandbox rerun checks remain pending.
+Fresh-sandbox host model-access checks pass in both harnesses. These checks do
+not verify inference. OpenCode and Codex device logins returned HTTP 401 during
+sandbox tests. Codex also failed without the deployment login helper and after
+a daemon restart. The cause is unknown. Local-login preservation remains
+untested. See `BACKLOG.md` for evidence and remaining checks.
 
 ### Context7 registration
 
