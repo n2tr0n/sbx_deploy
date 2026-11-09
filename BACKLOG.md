@@ -3,7 +3,6 @@
 Check each report against current code before making changes. AI reports below
 are unverified. Record reproduction evidence. Update or close each entry after investigation.
 
-- [AI-reported; unverified] Repeated OpenAI login: helpers may trust `SBX_CRED_OPENAI_MODE` instead of saved credentials. Check local-login and host-placeholder detection. Preserve explicit `--force` behavior.
 - [Code-reviewed; sandbox reproduction pending] Local OpenAI login selection: with host OAuth configured, installer reruns can reselect the managed OpenCode credential and Codex `sbx-chatgpt` provider after an explicit local login. The OpenCode import calls `auth switch` for an inactive matching managed record; the Codex configuration stage resets `model_provider`. Saved local tokens remain. Confirm in both harnesses. Preserve explicit local login selection on reruns.
 - [AI-reported; unverified] Shell startup hangs: check whether `flock 9` in `sbx-local-syslog` can wait indefinitely. Consider a time limit with a warning that lets shells continue. Include noninteractive agent shells.
 - [AI-reported; unverified] Webtop prompt: the wrapper may close FD 6. Check terminal input on FD 0 and the `/dev/tty` fallback. Confirm that prompts cannot read pasted script text.
