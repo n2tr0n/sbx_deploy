@@ -1,12 +1,12 @@
 # Windows host setup and troubleshooting
 
-For local Docker Sandboxes (`sbx`) of type `opencode`, run host commands in
-**Windows PowerShell**.
-With host-managed authentication, real credentials stay in the host keychain.
-Sandbox files contain placeholders. Explicit local logins can store real
-credentials inside the sandbox.
-The installer cannot configure or restart the host. Keep host settings outside
-sandbox-mounted workspaces. Never put real tokens in logs or chat.
+For local Docker Sandboxes (`sbx`) of type `opencode`.
+Run host commands in **Windows PowerShell**. Run the installer in **sandbox Bash**.
+The installer cannot configure or restart the host.
+
+Host-managed credentials stay on Windows. Local logins can store credentials
+inside the sandbox. Keep host settings outside mounted workspaces.
+Never put real tokens in logs or chat.
 
 ## One-time host setup
 
@@ -50,16 +50,10 @@ bindings:
 
 These settings survive sandbox recreation.
 
-### Authentication choices on rerun
+### Local logins
 
-The installer uses host OAuth when no saved local choice exists.
-OpenCode keeps the saved OpenAI credential selection. This includes an inactive
-managed credential. Codex keeps an explicit provider. If its provider is unset
-and `auth.json` exists, the installer keeps the built-in provider.
-The installer does not read that file to check whether its login is valid.
-
-Local login helpers are explicit overrides. A successful Codex local login
-selects the built-in OpenAI provider. Host proxy substitution can still apply.
+The installer preserves saved login choices on rerun. Local login helpers
+override the default host OAuth choice. Host proxy substitution can still apply.
 Do not copy real tokens into the managed provider or placeholder files.
 
 ### Context7 registration
@@ -75,9 +69,8 @@ sbx mcp add context7 --url https://mcp.context7.com/mcp/oauth
 sbx mcp auth status context7
 ```
 
-Registration and OAuth stay on the host. No API key or
-`credentials.yaml` binding is required. Docker Desktop MCP Toolkit registrations
-are separate from `sbx mcp`.
+Context7 needs no API key or `credentials.yaml` binding.
+Use `sbx mcp`; Docker Desktop MCP Toolkit registrations are separate.
 
 [Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/),
 [Context7 OAuth guide](https://context7.com/docs/howto/oauth)
@@ -90,34 +83,14 @@ For each running sandbox, attach Context7 if absent. Use its name from `sbx ls`:
 sbx mcp load context7 --sandbox <sandbox-name>
 ```
 
-Attachments survive restarts. Alternatively, use `--static-mcp context7`
-during sandbox creation.
+Attachments survive restarts.
 
-## Headless VS Code tunnel
+## Optional VS Code tunnel
 
-The installer installs Microsoft's standalone VS Code CLI and the
-`vscode_tunnel` alias. The final information box shows the setup commands.
-Run the alias in sandbox Bash after deployment. It signs in when needed,
-accepts the VS Code Server license terms, and starts a background supervisor.
-The supervisor retries after a tunnel exit. A lock prevents duplicate supervisors.
-Sign-in and runtime output stay outside deployment logs.
-During sign-in, the helper copies the device code to the terminal clipboard.
-It then uses the SBX browser bridge to open the GitHub device page on Windows.
-If copying fails, copy the displayed code manually. If browser opening fails,
-open the displayed URL. The terminal must support clipboard forwarding (OSC 52).
-Inside tmux, clipboard copying uses the existing tmux clipboard settings.
-
-If the host page does not open, check `sbx settings get browser.enabled` in
-**host PowerShell**. If it is false and you want browser forwarding, run
-`sbx settings set browser.enabled true`. This is a global SBX setting.
-The installer does not change it. See the
-[Docker browser setting](https://docs.docker.com/ai/sandboxes/configuration/settings/#browserenabled).
+Use this section to connect Windows VS Code to the sandbox.
+No sandbox port mapping is required. VS Code AI extensions need separate setup.
 
 ### One-time startup registration
-
-The standard sandbox runs `sh` as PID 1. It has no active systemd manager.
-`/etc/sandbox-persistent.sh` runs on Bash startup, not at sandbox boot.
-Use the supplied SBX startup kit for restart support.
 
 In **host PowerShell**, from the SBX Deploy repository, check the sandbox's kit
 list with `sbx inspect <sandbox-name>`. Skip attachment if `sbx-vscode-tunnel`
@@ -130,17 +103,13 @@ sbx kit add <sandbox-name> ./kits/vscode-tunnel
 ```
 
 Kit attachment recreates the sandbox container and interrupts sessions.
-Save open work first. Attach the kit before tunnel setup. Then rerun the installer
-inside the sandbox if required. Run the installer and `vscode_tunnel` as `agent`
-(UID 1000). For another user, supply `--kit-arg user=<user-or-uid>` when you
-validate, inspect, and attach the kit. Use the same user for all tunnel commands.
-If the installed SBX version rejects startup kits or container recreation, stop
-and keep the existing sandbox. Do not reset it. Check `sbx kit add --help`.
+Save open work first. Attach before tunnel setup. Rerun the installer if required.
+Run the installer and tunnel as `agent` (UID 1000). For another user, add
+`--kit-arg user=<user-or-uid>` to all three kit commands. Use that user for setup.
+If SBX rejects the kit, stop. Do not reset the sandbox. Check `sbx kit add --help`.
 
-The startup kit makes no files or network requests until tunnel setup is enabled.
-It starts the enabled supervisor on each sandbox start without a shell login.
-Attaching the kit does not start a stopped sandbox after a Windows reboot.
-Start that sandbox with `sbx start <sandbox-name>`; its tunnel then starts too.
+The kit restarts an enabled tunnel when the sandbox starts. After a Windows
+reboot, start the sandbox with `sbx start <sandbox-name>`.
 
 ### Tunnel setup and control
 
@@ -153,28 +122,25 @@ vscode_status
 # vscode_disable
 ```
 
-Use the same GitHub account in Windows VS Code. Install **Remote - Tunnels**.
-Run **Remote Tunnels: Connect to Tunnel**. `vscode_status` shows a status box
-with the connection state, startup setting, supervisor state, and tunnel name.
-It shows a browser URL when connected. `vscode_tunnel --status` gives the same
-output. Status checks do not start the tunnel or sign in.
-No sandbox port mapping is required.
+`vscode_tunnel` accepts the VS Code Server license terms, signs in when needed,
+and enables the background tunnel. It copies the device code and opens the
+GitHub sign-in page on Windows. If either step fails, use the displayed code
+and URL manually. The tunnel keeps a separate login from VS Code and `gh`.
 
-The helper stores its own CLI login under
-`~/.local/state/sbx-deploy/vscode-tunnel/cli`. The directory is private. The CLI
-uses a file credential store with mode 600, separate from its default keyring.
-It preserves existing VS Code and `gh` logins. It does not import host credential placeholders. Run
-`vscode_tunnel --foreground` to show a connection URL or investigate a failed
-connection. Stop the background tunnel first with `vscode_disable`.
-Press Ctrl+C to stop a foreground tunnel. Run `vscode_tunnel` to enable startup
-again. For expired or revoked authorization, run `vscode_tunnel --login` to authorize
-again. This explicit command can replace the tunnel helper's saved login.
-Automatic startup continues until disabled; disable can take up to 30 seconds.
+In Windows VS Code, use the same GitHub account. Install **Remote - Tunnels**.
+Run **Remote Tunnels: Connect to Tunnel**. Use `vscode_status` to check access.
+Use `vscode_disable` to stop the tunnel and disable startup; allow up to 30 seconds.
 
-An unchanged deployment skips CLI downloads and settings writes. Tunnel setup
-runs only when requested. Tunnel runtime can use the network and download
-VS Code Server updates. OpenCode and Codex keep their shared models,
-authentication, and MCP settings. VS Code AI extensions need separate setup.
+### Tunnel troubleshooting
+
+If the sign-in page does not open, check `sbx settings get browser.enabled` in
+**host PowerShell**. To enable browser forwarding, run
+`sbx settings set browser.enabled true`. This changes a global SBX setting.
+
+For expired authorization, run `vscode_tunnel --login`. This replaces the tunnel's
+saved login. To investigate a failed connection, run `vscode_disable`, then
+`vscode_tunnel --foreground`. Press Ctrl+C to stop. Run `vscode_tunnel` to enable
+background startup again.
 
 If a connection fails, check the sandbox proxy policy from **host PowerShell**.
 Use `sbx policy check network <domain>:443`. Allow a required domain only when
@@ -182,8 +148,7 @@ no allow rule matches. Downloads need `update.code.visualstudio.com` and
 `vscode.download.prss.microsoft.com`. Tunnels also need GitHub or Microsoft
 sign-in endpoints and the Azure tunnel endpoints listed in
 [Microsoft's network requirements](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
-Keep real tokens out of command output. Do not add token bindings for Azure
-tunnel domains. Host-managed tunnel authentication needs separate validation.
+Do not add token bindings for Azure tunnel domains. Use the tunnel's sign-in flow.
 
 [VS Code Remote Tunnels guide](https://code.visualstudio.com/docs/remote/tunnels),
 [Docker startup kit reference](https://docs.docker.com/ai/sandboxes/customize/kits-v2/#startup)
@@ -230,9 +195,6 @@ Confirm the target with **host PowerShell** `sbx ls`.
 - OpenAI: check for `(oauth configured)` in host `sbx secret ls`.
   Renew with `sbx secret set openai --oauth` if required.
 - For persistent failures, run host `sbx daemon status` to find the log path.
-  Set `sbx daemon log-level set proxy debug`, reproduce one failure, then restore
-  `sbx daemon log-level set proxy info`. Check entries for the target host.
-  `skipping mitm (no credentials to inject)` indicates missing active injection.
   Remove tokens before sharing logs.
 
 Avoid `sbx reset`: it deletes sandbox state and stored secrets.
