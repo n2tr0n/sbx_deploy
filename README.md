@@ -1,9 +1,10 @@
 # SBX Deploy
 
-SBX Deploy is a Bash installer for Debian/Ubuntu environments inside local
-[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`).
+SBX Deploy is a Bash installer for local
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`)
+created with the `opencode` sandbox type.
 
-`sbx_deploy.sh` installs sandbox tools, tmux, TPM, tmux-resurrect, UTF-8 wrappers,
+`sbx_local_opencode_deploy.sh` installs sandbox tools, tmux, TPM, tmux-resurrect, UTF-8 wrappers,
 and Bash aliases. It configures OpenCode and Codex for host credentials and the MCP gateway.
 
 To use other harnesses or providers, fork this project. Ask your coding agent to

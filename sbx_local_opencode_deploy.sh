@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
+# Target: local Docker Sandboxes (sbx) created with the opencode sandbox type.
 # Deployment operations (keep current):
-# Lock /run/sbx-deploy.lock before saving ~/sbx_deploy.sh. Back up changed copies.
+# Lock /run/sbx-deploy.lock before saving ~/sbx_local_opencode_deploy.sh. Back up changed copies.
 # Preserve edited helpers with private baselines. Check shell migrations before writes.
 # Reject concurrent edits. Set time limits for unattended commands.
 # 1. Show the SBX banner. Require hostname confirmation from a terminal (default No).
@@ -33,7 +34,7 @@
 #     Show host daemon restart and Context7 attachment commands.
 #     Refresh pasted or sourced interactive shells after success.
 #
-# Paste the entire file into Bash. Rerun with: bash ~/sbx_deploy.sh
+# Paste the entire file into Bash. Rerun with: bash ~/sbx_local_opencode_deploy.sh
 # Save before deployment. The literal payload remains data until Bash parses the outer block.
 {
 (
@@ -46,13 +47,13 @@ if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]];
     sbx_child_shell=true
 fi
 sbx_save_and_run() {
-    local payload target="$HOME/sbx_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
+    local payload target="$HOME/sbx_local_opencode_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
     local tmux_redeploy=false option
     if "$sbx_child_shell"; then
         for option in "${sbx_script_args[@]}"; do
             case $option in
                 --tmux-redeploy) tmux_redeploy=true ;;
-                *) printf 'Usage: bash ~/sbx_deploy.sh [--tmux-redeploy]\n' >&2; exit 2 ;;
+                *) printf 'Usage: bash ~/sbx_local_opencode_deploy.sh [--tmux-redeploy]\n' >&2; exit 2 ;;
             esac
         done
     fi
@@ -106,7 +107,7 @@ sbx_save_and_run() {
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
 # Ask about Webtop only without its container; preserve existing desktop state/data.
 # Run desktop for boxed status, browser access and host reconnection commands.
-# Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
+# Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_local_opencode_deploy.sh
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
         printf '%s\n' 'sbx_child_shell=false' \
@@ -734,7 +735,7 @@ finish_installer() {
 trap finish_installer EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-report_line 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_deploy.sh'
+report_line 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_local_opencode_deploy.sh'
 report_line "Log: $log_file"
 report_line ''
 report_row Stage Result Details "$muted"
@@ -1030,7 +1031,7 @@ replace_system_file() (
 # Record private baselines only after successful file publication.
 managed_conflict() {
     if [[ $1 == /etc/tmux.conf ]]; then
-        die "Unrecognized or edited tmux configuration: $1. File preserved. Review it, then run bash ~/sbx_deploy.sh --tmux-redeploy to back it up and restore the supplied configuration."
+        die "Unrecognized or edited tmux configuration: $1. File preserved. Review it, then run bash ~/sbx_local_opencode_deploy.sh --tmux-redeploy to back it up and restore the supplied configuration."
     fi
     die "Managed file differs: $1. Preserve/rename it, or restore the baseline in $log_dir/managed after reviewing your edits, then rerun. No force overwrite is available."
 }
@@ -1242,7 +1243,7 @@ set -g @plugin 'tmux-plugins/tmux-resurrect'
 run-shell -b 'if [ -x "$HOME/.tmux/plugins/tpm/tpm" ] && [ -x "$HOME/.tmux/plugins/tmux-resurrect/resurrect.tmux" ]; then "$HOME/.tmux/plugins/tpm/tpm"; fi'
 TMUX_CONF
 # Preserve changed user settings by default. To back them up and restore these
-# defaults explicitly, run: bash ~/sbx_deploy.sh --tmux-redeploy
+# defaults explicitly, run: bash ~/sbx_local_opencode_deploy.sh --tmux-redeploy
 # The flag does not bypass path safety or concurrent-edit checks.
 tmux_option=--skip-matching
 if "$tmux_redeploy"; then tmux_option=--tmux-redeploy; fi
@@ -1860,7 +1861,7 @@ if [[ $container_state == exited || $container_state == created ]]; then
 elif [[ $status == 'Not deployed' ]]; then
     summary_text ''
     summary_text 'Sandbox Bash - deploy the desktop (choose Yes):'
-    summary_command 'bash ~/sbx_deploy.sh'
+    summary_command 'bash ~/sbx_local_opencode_deploy.sh'
 fi
 summary_text ''
 summary_end
@@ -2762,7 +2763,7 @@ check_credential() {
         fi
     elif ! "$host_oauth"; then
         openai_auth_status='needs attention'
-        record_issue openai OpenAI 'Host OAuth is not configured.' $'Windows PowerShell:\n  sbx secret set openai --oauth\nConfigure the OAuth binding using HOST_SETUP_WIN.md, then restart the sandbox.\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+        record_issue openai OpenAI 'Host OAuth is not configured.' $'Windows PowerShell:\n  sbx secret set openai --oauth\nConfigure the OAuth binding using HOST_SETUP_WIN.md, then restart the sandbox.\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_local_opencode_deploy.sh'
         stage_done attention 'Host OAuth needs setup; see final actions'
         return 0
     else
@@ -2810,7 +2811,7 @@ check_credential() {
         5??) actions='Service or proxy error; retry later. If it persists, inspect host proxy logs using HOST_SETUP_WIN.md.' ;;
         *) actions='Check sandbox connectivity, proxy and CA trust using HOST_SETUP_WIN.md. A timeout does not prove bad credentials.' ;;
     esac
-    actions+=$'\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+    actions+=$'\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_local_opencode_deploy.sh'
     record_issue "$service" "$2" "$detail" "$actions"
     stage_done attention 'Authentication unverified; see final actions'
 }

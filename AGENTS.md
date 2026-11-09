@@ -1,6 +1,6 @@
 # SBX Deploy
 
-- Maintain `sbx_deploy.sh` as a Bash installer for Debian/Ubuntu sandboxes.
+- Maintain `sbx_local_opencode_deploy.sh` as a Bash installer for local SBX sandboxes of type `opencode`.
 - Read [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md) for Windows credentials, bindings, and proxy troubleshooting. Update it when host requirements change.
 - Run the installer inside the sandbox. Document Windows host actions in `HOST_SETUP_WIN.md`. Do not perform them from the installer.
 - Keep deployment defaults equivalent across harnesses: models, subagents, MCP servers, and shared tools. Use shared values. Document unsupported differences. Preserve deliberate local overrides.

@@ -1,6 +1,7 @@
 # Windows host setup and troubleshooting
 
-For local Docker Sandboxes (`sbx`), run host commands in **Windows PowerShell**.
+For local Docker Sandboxes (`sbx`) of type `opencode`, run host commands in
+**Windows PowerShell**.
 Real credentials stay in the host keychain. Sandbox files contain placeholders.
 The installer cannot configure or restart the host. Keep host settings outside
 sandbox-mounted workspaces. Never put real tokens in logs or chat.
