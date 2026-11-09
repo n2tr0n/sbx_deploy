@@ -189,7 +189,7 @@ kill_seconds=5
 exec 3>&1 4>&2
 verbose=${SBX_VERBOSE:-0}
 animated=false
-green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_grey=
+green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_dark_green= banner_grey=
 utf8=false
 spinner_frames=('|' '/' '-' '\')
 locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
@@ -206,6 +206,7 @@ if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
         banner_grey=$'\033[38;5;245m'
         banner_white=$'\033[1;37m'
         banner_bright_green=$'\033[1;92m'
+        banner_dark_green=$'\033[38;5;22m'
     fi
 fi
 
@@ -234,7 +235,7 @@ while IFS= read -r line; do
             ;;
         9)
             label="Nitron's Deployment Script for SBX v0.3a"
-            line=${line/"$label"/"$green$label$banner_grey"}
+            line=${line/"$label"/"$banner_dark_green$label$banner_grey"}
             ;;
     esac
     printf '%s%s%s\n' "$banner_grey" "$line" "$reset" >&3
