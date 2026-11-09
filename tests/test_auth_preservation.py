@@ -113,7 +113,7 @@ class AuthenticationSelection(unittest.TestCase):
             argv = ['fixture', str(source), str(staged), 'main', 'sub',
                     str(host).lower(), 'sbx-chatgpt', 'base', 'masked-access', 'gateway', str(state)]
             with patch.dict(sys.modules, tomlkit=tomlkit, config_ownership=ownership_module), \
-                    patch.object(os, 'getuid', lambda: 0, create=True), patch.object(sys, 'argv', argv):
+                    patch.object(os, 'getuid', getattr(os, 'getuid', lambda: 0), create=True), patch.object(sys, 'argv', argv):
                 exec(compile(payload('SBX_CODEX_MODEL'), 'Codex payload', 'exec'), {})
                 self.assertEqual(source.read_text(), original)
                 first = copy.deepcopy(written)

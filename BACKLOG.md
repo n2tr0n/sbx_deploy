@@ -23,6 +23,14 @@ credentials out of logs and shared output.
   check.
 
 - [Sandbox validation pending] Model and MCP override preservation. Fixture checks
-  pass. Check fresh setup, custom overrides, and interrupted runs in both harnesses.
-  Review the OpenCode and Codex config backups from the `newtest1` migration.
-  Restore any custom or unrelated settings. Keep the backups until review is done.
+  pass in `newtest1` (17 tests). Check the full installer with fresh setup, custom
+  overrides, and interrupted runs in both harnesses.
+  The migration backup review found no replaced model settings. Codex provider
+  settings are unchanged. OpenCode lost `mcp.mcp-gateway.headers.Authorization`.
+  The saved value contains placeholder text. The user does not know its source
+  or why it was removed. Do not restore it until ownership is clear.
+  The current code preserves MCP headers;
+  a new fixture check passes. Keep both backups:
+  `~/.config/opencode/opencode.json.bak.iyIORl` and
+  `~/.codex/config.toml.bak.7AVe1J`. If the header is confirmed as a user setting,
+  copy only that setting from the OpenCode backup. Preserve the current config.

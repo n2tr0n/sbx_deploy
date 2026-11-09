@@ -164,6 +164,24 @@ class ConfigOwnership(unittest.TestCase):
             result = self.read(harness, source)
             self.assertEqual(result['mcp' if harness == 'opencode' else 'mcp_servers']['mcp-gateway'], expected)
 
+    def test_mcp_headers_and_other_servers(self):
+        for harness in ('opencode', 'codex'):
+            if harness == 'codex' and tomlkit is None:
+                continue
+            source, _ = self.run_config(harness)
+            data = self.read(harness, source)
+            key = 'mcp' if harness == 'opencode' else 'mcp_servers'
+            headers_key = 'headers' if harness == 'opencode' else 'http_headers'
+            headers = {'Authorization': 'Bearer masked-fixture'}
+            data[key]['mcp-gateway'][headers_key] = headers
+            other = {'url': 'https://example.invalid/mcp', 'enabled': False}
+            data[key]['custom-server'] = other
+            self.write(harness, source, data)
+            self.run_config(harness, gateway='new-url')
+            result = self.read(harness, source)
+            self.assertEqual(result[key]['mcp-gateway'][headers_key], headers)
+            self.assertEqual(result[key]['custom-server'], other)
+
 
 if __name__ == '__main__':
     unittest.main()
