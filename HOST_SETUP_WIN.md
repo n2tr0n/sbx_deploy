@@ -1,9 +1,12 @@
 # Windows host setup and troubleshooting
 
-For local Docker Sandboxes (`sbx`), run host commands in **Windows PowerShell**.
-Real credentials stay in the host keychain. Sandbox files contain placeholders.
-The installer cannot configure or restart the host. Keep host settings outside
-sandbox-mounted workspaces. Never put real tokens in logs or chat.
+For local Docker Sandboxes (`sbx`) of type `opencode`.
+Run host commands in **Windows PowerShell**. Run the installer in **sandbox Bash**.
+The installer cannot configure or restart the host.
+
+Host-managed credentials stay on Windows. Local logins can store credentials
+inside the sandbox. Keep host settings outside mounted workspaces.
+Never put real tokens in logs or chat.
 
 ## One-time host setup
 
@@ -47,6 +50,12 @@ bindings:
 
 These settings survive sandbox recreation.
 
+### Local logins
+
+The installer preserves saved login choices on rerun. Local login helpers
+override the default host OAuth choice. Host proxy substitution can still apply.
+Do not copy real tokens into the managed provider or placeholder files.
+
 ### Context7 registration
 
 In **host PowerShell**, check `sbx mcp ls` and `sbx mcp inspect context7`.
@@ -60,9 +69,8 @@ sbx mcp add context7 --url https://mcp.context7.com/mcp/oauth
 sbx mcp auth status context7
 ```
 
-Registration and OAuth stay on the host. No API key or
-`credentials.yaml` binding is required. Docker Desktop MCP Toolkit registrations
-are separate from `sbx mcp`.
+Context7 needs no API key or `credentials.yaml` binding.
+Use `sbx mcp`; Docker Desktop MCP Toolkit registrations are separate.
 
 [Docker gateway guide](https://docs.docker.com/ai/sandboxes/mcp-gateway/),
 [Context7 OAuth guide](https://context7.com/docs/howto/oauth)
@@ -75,12 +83,81 @@ For each running sandbox, attach Context7 if absent. Use its name from `sbx ls`:
 sbx mcp load context7 --sandbox <sandbox-name>
 ```
 
-Attachments survive restarts. Alternatively, use `--static-mcp context7`
-during sandbox creation.
+Attachments survive restarts.
+
+## Optional VS Code tunnel
+
+Use this section to connect Windows VS Code to the sandbox.
+No sandbox port mapping is required. VS Code AI extensions need separate setup.
+
+### One-time startup registration
+
+In **host PowerShell**, from the SBX Deploy repository, check the sandbox's kit
+list with `sbx inspect <sandbox-name>`. Skip attachment if `sbx-vscode-tunnel`
+is already present. Inspect the kit, then attach it only if absent:
+
+```powershell
+sbx kit validate ./kits/vscode-tunnel --offline
+sbx kit inspect ./kits/vscode-tunnel --offline
+sbx kit add <sandbox-name> ./kits/vscode-tunnel
+```
+
+Kit attachment recreates the sandbox container and interrupts sessions.
+Save open work first. Attach before tunnel setup. Rerun the installer if required.
+Run the installer and tunnel as `agent` (UID 1000). For another user, add
+`--kit-arg user=<user-or-uid>` to all three kit commands. Use that user for setup.
+If SBX rejects the kit, stop. Do not reset the sandbox. Check `sbx kit add --help`.
+
+The kit restarts an enabled tunnel when the sandbox starts. After a Windows
+reboot, start the sandbox with `sbx start <sandbox-name>`.
+
+### Tunnel setup and control
+
+In **sandbox Bash**, after deployment:
+
+```bash
+vscode_tunnel
+vscode_status
+# To stop the tunnel and disable automatic startup:
+# vscode_disable
+```
+
+`vscode_tunnel` accepts the VS Code Server license terms, signs in when needed,
+and enables the background tunnel. It copies the device code and opens the
+GitHub sign-in page on Windows. If either step fails, use the displayed code
+and URL manually. The tunnel keeps a separate login from VS Code and `gh`.
+
+In Windows VS Code, use the same GitHub account. Install **Remote - Tunnels**.
+Run **Remote Tunnels: Connect to Tunnel**. Use `vscode_status` to check access.
+Use `vscode_disable` to stop the tunnel and disable startup; allow up to 30 seconds.
+
+### Tunnel troubleshooting
+
+If the sign-in page does not open, check `sbx settings get browser.enabled` in
+**host PowerShell**. To enable browser forwarding, run
+`sbx settings set browser.enabled true`. This changes a global SBX setting.
+
+For expired authorization, run `vscode_tunnel --login`. This replaces the tunnel's
+saved login. To investigate a failed connection, run `vscode_disable`, then
+`vscode_tunnel --foreground`. Press Ctrl+C to stop. Run `vscode_tunnel` to enable
+background startup again.
+
+If a connection fails, check the sandbox proxy policy from **host PowerShell**.
+Use `sbx policy check network <domain>:443`. Allow a required domain only when
+no allow rule matches. Downloads need `update.code.visualstudio.com` and
+`vscode.download.prss.microsoft.com`. Tunnels also need GitHub or Microsoft
+sign-in endpoints and the Azure tunnel endpoints listed in
+[Microsoft's network requirements](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
+Do not add token bindings for Azure tunnel domains. Use the tunnel's sign-in flow.
+
+[VS Code Remote Tunnels guide](https://code.visualstudio.com/docs/remote/tunnels),
+[Docker startup kit reference](https://docs.docker.com/ai/sandboxes/customize/kits-v2/#startup)
 
 ## Optional Webtop desktop
 
-Check registry access in **host PowerShell**:
+Webtop downloads require access to `lscr.io:443`. Before selecting Yes in the
+installer, check registry access in **host PowerShell**. Add an allow rule only
+if no allow rule matches:
 
 ```powershell
 sbx policy check network lscr.io:443
@@ -120,9 +197,6 @@ Confirm the target with **host PowerShell** `sbx ls`.
 - OpenAI: check for `(oauth configured)` in host `sbx secret ls`.
   Renew with `sbx secret set openai --oauth` if required.
 - For persistent failures, run host `sbx daemon status` to find the log path.
-  Set `sbx daemon log-level set proxy debug`, reproduce one failure, then restore
-  `sbx daemon log-level set proxy info`. Check entries for the target host.
-  `skipping mitm (no credentials to inject)` indicates missing active injection.
   Remove tokens before sharing logs.
 
 Avoid `sbx reset`: it deletes sandbox state and stored secrets.

@@ -1,0 +1,10 @@
+# Python caches.
+__pycache__/
+*.pyc
+*.pyo
+
+# Local instructions.
+/AGENTS.local.md
+
+# Local temporary files
+.release-check/

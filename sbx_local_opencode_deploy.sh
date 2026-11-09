@@ -1,39 +1,10 @@
 #!/usr/bin/env bash
-# Deployment operations (keep current):
-# Lock /run/sbx-deploy.lock before saving ~/sbx_deploy.sh. Back up changed copies.
-# Preserve edited helpers with private baselines. Check shell migrations before writes.
-# Reject concurrent edits. Set time limits for unattended commands.
-# 1. Show the SBX banner. Require hostname confirmation from a terminal (default No).
-# 2. Show compact stages and live APT progress. Keep five private run logs.
-# 3. Check paths. Install missing packages; omit recommended packages for cmatrix only.
-# 4. Install missing Codex with download, install, and version time limits.
-#    Download missing TPM/tmux-resurrect atomically.
-# 5. Start rsyslog and log rotation on Bash startup, including after restarts.
-# 6. Install tmux configuration; upgrade only unchanged deployment files.
-#    Preserve edits unless --tmux-redeploy is set. Load plugins and check bindings.
-#    Add the bundled resurrect snapshot only without user saves. Restore it manually.
-# 7. Install UTF-8 tmux/btop wrappers, PATH entries, aliases, and login helpers.
-#    New user helpers belong to the caller, including in root-owned directories.
-#    Provide auth_all and individual OpenCode/Codex/GitHub logins with clipboard copying.
-#    Open the Codex device-login browser. Show a URL if browser opening fails.
-#    Local logins are explicit overrides; --force repeats login. Host substitution stays active.
-# 8. Install abbreviated-path prompts: red for root, green for other users.
-# 9. Upgrade /home/agent/.opencode/bin/opencode once per binary checksum, if installed.
-# 10. Import masked host OAuth into OpenCode. Route Codex through the same proxy.
-#     Preserve matching configuration and existing local credentials.
-# 11. Use GPT-6.1 Sol for main agents and GPT-6 Luna for subagents in both harnesses.
-#     Connect both harnesses to the shared host-managed MCP gateway.
-# 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
-#     Install check_credentials and check_mcp. Cache successes; SBX_CHECK_AUTH=1 checks again.
-#     OpenAI checks model-list access only. No agent tasks start.
-# 13. Offer Ubuntu XFCE Webtop only if its container is absent. Preserve existing desktops.
-#     Install desktop to show status, URL, and host reconnection and port commands.
-# 14. Clean up. Show results, recovery actions, checks, desktop access, and log path.
-#     Show host daemon restart and Context7 attachment commands.
-#     Refresh pasted or sourced interactive shells after success.
-#
-# Paste the entire file into Bash. Rerun with: bash ~/sbx_deploy.sh
-# Save before deployment. The literal payload remains data until Bash parses the outer block.
+# Target: local Docker Sandboxes (sbx) of type opencode.
+# Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
+# Rerun: bash ~/sbx_local_opencode_deploy.sh
+# --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 {
 (
 set -euo pipefail
@@ -45,13 +16,13 @@ if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]];
     sbx_child_shell=true
 fi
 sbx_save_and_run() {
-    local payload target="$HOME/sbx_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
+    local payload target="$HOME/sbx_local_opencode_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
     local tmux_redeploy=false option
     if "$sbx_child_shell"; then
         for option in "${sbx_script_args[@]}"; do
             case $option in
                 --tmux-redeploy) tmux_redeploy=true ;;
-                *) printf 'Usage: bash ~/sbx_deploy.sh [--tmux-redeploy]\n' >&2; exit 2 ;;
+                *) printf 'Usage: bash ~/sbx_local_opencode_deploy.sh [--tmux-redeploy]\n' >&2; exit 2 ;;
             esac
         done
     fi
@@ -91,21 +62,12 @@ sbx_save_and_run() {
         # The saved copy needs only a brief operational header.
         cat <<'SBX_SAVED_HEADER'
 #!/usr/bin/env bash
-# Lock deployment before saving; atomically update recognized helpers and loaders.
-# Preserve edited files, reject intervening changes, and bound unattended commands.
-# Install sandbox tools, tmux configuration and an initial resurrect snapshot,
-# login helpers/terminal clipboard, and prompts;
-# default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
-# Connect OpenCode/Codex to the shared sandbox MCP gateway.
-# Run check_credentials for auth/source checks; check_mcp lists brokered MCP tools.
-# Summarize results and detected issues; show checks, desktop access and log path.
-# Print host daemon restart and named Context7 attachment commands.
-# Confirm the hostname after the banner; default No, require terminal input.
-# Show Codex download/install/version steps with time limits.
-# Start sandbox rsyslog/rotation on Bash startup, including after restarts.
-# Ask about Webtop only without its container; preserve existing desktop state/data.
-# Run desktop for boxed status, browser access and host reconnection commands.
-# Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_deploy.sh
+# Target: local Docker Sandboxes (sbx) of type opencode.
+# Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
+# Rerun: bash ~/sbx_local_opencode_deploy.sh
+# --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
         printf '%s\n' 'sbx_child_shell=false' \
@@ -218,7 +180,7 @@ kill_seconds=5
 exec 3>&1 4>&2
 verbose=${SBX_VERBOSE:-0}
 animated=false
-green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_grey=
+green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_dark_green= banner_grey=
 utf8=false
 spinner_frames=('|' '/' '-' '\')
 locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
@@ -235,6 +197,7 @@ if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
         banner_grey=$'\033[38;5;245m'
         banner_white=$'\033[1;37m'
         banner_bright_green=$'\033[1;92m'
+        banner_dark_green=$'\033[38;5;22m'
     fi
 fi
 
@@ -262,8 +225,8 @@ while IFS= read -r line; do
             fi
             ;;
         9)
-            label="Nitron's Deployment Script for SBX v0.1a"
-            line=${line/"$label"/"$green$label$banner_grey"}
+            label="Nitron's Deployment Script for SBX v0.4a"
+            line=${line/"$label"/"$banner_dark_green$label$banner_grey"}
             ;;
     esac
     printf '%s%s%s\n' "$banner_grey" "$line" "$reset" >&3
@@ -275,10 +238,10 @@ done <<'SBX_BANNER'
  \_  _                                                                 _  _/
    \/     _______   _______ ___   ___                                   \/
    /\    /  _____/ /  __   \\  \ /  /                                   /\
-  /  \   \____  \ /  /_/  <  \  V  /       .:: S B X   D E P L O Y ::. /  \
+  /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
   \  /  —————/  //  /_/   /  /  \  \                                   \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX v0.3a               __/  /\
+   /\  \__  Nitron's Deployment Script for SBX v0.4a               __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
 
@@ -370,21 +333,24 @@ report_line() {
     printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3
     printf '%s\n' "$1" >> "$log_file"
 }
-summary_width=${COLUMNS:-}
-if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
-    summary_width=$(tput cols 2>/dev/null) || summary_width=80
-fi
-[[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
-summary_width=$((10#$summary_width))
-(( summary_width > 0 )) || summary_width=80
-(( summary_width <= 80 )) || summary_width=80
-box_open=false
-box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
-command_bullet='-'
-if "$utf8"; then
-    box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
-    command_bullet='•'
-fi
+summary_layout() {
+    summary_width=${COLUMNS:-}
+    if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
+        summary_width=$(tput cols 2>/dev/null) || summary_width=80
+    fi
+    [[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
+    summary_width=$((10#$summary_width))
+    (( summary_width > 0 )) || summary_width=80
+    (( summary_width <= 80 )) || summary_width=80
+    box_open=false
+    box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
+    command_bullet='-'
+    if "$utf8"; then
+        box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
+        command_bullet='•'
+    fi
+}
+summary_layout
 box_rule() {
     local rule
     printf -v rule '%*s' "$((summary_width - 2))" ''
@@ -713,6 +679,28 @@ finish_installer() {
         fi
         summary_text ''
         summary_end
+        summary_begin 'VS CODE TUNNEL' "$green"
+        summary_text ''
+        summary_text 'Sandbox Bash - set up remote access:'
+        summary_command vscode_tunnel
+        summary_text 'Accepts the server license terms. Complete browser sign-in if requested.' "$muted"
+        summary_text 'Copies the device code and opens the sign-in page on the host.' "$muted"
+        summary_text 'Enables the background tunnel with its saved VS Code login.' "$muted"
+        summary_command vscode_status 'Check the connection'
+        summary_command vscode_disable 'Stop and disable automatic startup'
+        summary_text ''
+        summary_text 'Windows PowerShell - attach the startup kit once:'
+        summary_command "sbx kit add $host_sandbox_arg ./kits/vscode-tunnel"
+        summary_text 'Run from the SBX Deploy repository. Kit attachment restarts the sandbox.' "$muted"
+        summary_text 'Attach before tunnel setup. See HOST_SETUP_WIN.md for checks.' "$muted"
+        if (( EUID != 1000 )); then
+            summary_text "For this caller, add --kit-arg user=$EUID to the host command." "$amber"
+        fi
+        summary_text ''
+        summary_text 'Connect from Windows VS Code:'
+        summary_text 'VS Code > Remote Tunnels: Connect to Tunnel' "$muted"
+        summary_text ''
+        summary_end
         summary_begin 'POST DEPLOYMENT COMMANDS' "$green"
         summary_text ''
         summary_text 'Windows PowerShell: run in this order for a new sandbox.'
@@ -733,7 +721,7 @@ finish_installer() {
 trap finish_installer EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-report_line 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_deploy.sh'
+report_line 'To run in verbose mode, SBX_VERBOSE=1 bash ~/sbx_local_opencode_deploy.sh'
 report_line "Log: $log_file"
 report_line ''
 report_row Stage Result Details "$muted"
@@ -1029,7 +1017,7 @@ replace_system_file() (
 # Record private baselines only after successful file publication.
 managed_conflict() {
     if [[ $1 == /etc/tmux.conf ]]; then
-        die "Unrecognized or edited tmux configuration: $1. File preserved. Review it, then run bash ~/sbx_deploy.sh --tmux-redeploy to back it up and restore the supplied configuration."
+        die "Unrecognized or edited tmux configuration: $1. File preserved. Review it, then run bash ~/sbx_local_opencode_deploy.sh --tmux-redeploy to back it up and restore the supplied configuration."
     fi
     die "Managed file differs: $1. Preserve/rename it, or restore the baseline in $log_dir/managed after reviewing your edits, then rerun. No force overwrite is available."
 }
@@ -1121,6 +1109,48 @@ queue_helper() {
     queue_managed_file "$target" "$desired"
 }
 
+stage_begin 'VS Code' 'Checking headless CLI'
+vscode_binary="$HOME/.local/lib/sbx-deploy/vscode-code"
+if exists "$vscode_binary"; then
+    [[ -f $vscode_binary && -x $vscode_binary && ! -L $vscode_binary ]] ||
+        die "VS Code CLI path is unusable: $vscode_binary; preserve it, then restore a regular executable or move it before retrying."
+else
+    case $(uname -m) in
+        x86_64) vscode_platform=cli-linux-x64 ;;
+        aarch64|arm64) vscode_platform=cli-linux-arm64 ;;
+        *) die 'The headless VS Code CLI requires Linux x64 or ARM64.' ;;
+    esac
+    stage_operation "Downloading VS Code CLI (${download_seconds}s limit)"
+    if timeout --kill-after="${kill_seconds}s" "${download_seconds}s" \
+        curl -fsSL --connect-timeout 10 --max-time "$download_seconds" \
+        -o "$work_dir/vscode-cli.tar.gz" \
+        "https://update.code.visualstudio.com/latest/$vscode_platform/stable"; then
+        :
+    else
+        status=$?
+        die 'VS Code CLI download failed; check sandbox network/proxy access.' "$status"
+    fi
+    # Extract only the executable into the private workspace. Ignore archive paths.
+    stage_operation 'Checking downloaded VS Code CLI'
+    timeout --kill-after="${kill_seconds}s" "${install_seconds}s" \
+        tar -xOf "$work_dir/vscode-cli.tar.gz" code > "$work_dir/vscode-code"
+    chmod 755 -- "$work_dir/vscode-code"
+    timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+        "$work_dir/vscode-code" --version </dev/null
+    timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+        "$work_dir/vscode-code" tunnel --help </dev/null >/dev/null
+    # Publish only a complete, checked binary. Keep user authentication unchanged.
+    install_managed_file "$vscode_binary" "$work_dir/vscode-code"
+fi
+stage_operation 'Checking installed VS Code CLI'
+timeout --kill-after="${kill_seconds}s" "${version_seconds}s" \
+    "$vscode_binary" --version </dev/null
+if [[ -e $work_dir/changed ]]; then
+    stage_done changed 'Installed headless CLI; set up with vscode_tunnel'
+else
+    stage_done unchanged 'CLI present; tunnel login and settings preserved'
+fi
+
 # Add facility.severity tags to sandbox syslog. Preserve routing and rotation rules.
 # Start with the first Bash session after restart. Earlier boot messages can be missed.
 # https://docs.docker.com/ai/sandboxes/usage/#set-environment-variables
@@ -1168,7 +1198,16 @@ if [[ ${1-} == --rotate ]]; then
     done
 fi
 exec 9>>/run/sbx-local-syslog.lock
-flock 9
+# Shell startup catches failure and continues. Deployment must still stop on failure.
+if flock --wait 5 --conflict-exit-code 75 9; then
+    :
+else
+    lock_status=$?
+    if (( lock_status == 75 )); then
+        printf 'SBX logging: startup lock is busy after 5 seconds; logging setup skipped.\n' >&2
+    fi
+    exit "$lock_status"
+fi
 # Comparing with the daemon's PID file also recovers an interrupted install
 # that published the format but did not yet restart rsyslog.
 if [[ /etc/rsyslog.d/00-sbx-local-format.conf -nt /run/rsyslogd.pid ]] ||
@@ -1241,7 +1280,7 @@ set -g @plugin 'tmux-plugins/tmux-resurrect'
 run-shell -b 'if [ -x "$HOME/.tmux/plugins/tpm/tpm" ] && [ -x "$HOME/.tmux/plugins/tmux-resurrect/resurrect.tmux" ]; then "$HOME/.tmux/plugins/tpm/tpm"; fi'
 TMUX_CONF
 # Preserve changed user settings by default. To back them up and restore these
-# defaults explicitly, run: bash ~/sbx_deploy.sh --tmux-redeploy
+# defaults explicitly, run: bash ~/sbx_local_opencode_deploy.sh --tmux-redeploy
 # The flag does not bypass path safety or concurrent-edit checks.
 tmux_option=--skip-matching
 if "$tmux_redeploy"; then tmux_option=--tmux-redeploy; fi
@@ -1283,7 +1322,7 @@ resurrect_state_dir=$(
 ) || die 'Cannot resolve the tmux-resurrect save directory.'
 [[ $resurrect_state_dir == /* ]] || die 'tmux-resurrect save directory must be absolute.'
 seed_resurrect_snapshot() (
-    local state_dir=$1 seed=tmux_resurrect_sbx_default.txt saved staged= compare_status
+    local state_dir=$1 seed=tmux_resurrect_sbx_default.txt saved staged= compare_status snapshot
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -1299,24 +1338,22 @@ seed_resurrect_snapshot() (
             return 0
         fi
     done
-    # The 725-byte export has six single-pane windows: cli, cli2, opencode, codex, btop, log.
-    # All use /c/repo/docker-sandbox-testrepo. The directory and application state are not included.
-    # Normal resurrect process rules apply. Base64 preserves tabs and trailing fields during paste.
-    base64 --decode > "$work_dir/resurrect-snapshot" <<'SBX_RESURRECT_SNAPSHOT'
-cGFuZQkwCTAJMAk6CTAJc2J4LW5ld25hbWV0ZXN0CTovYy9yZXBvL2RvY2tlci1zYW5kYm94LXRl
-c3RyZXBvCTEJYmFzaAk6CnBhbmUJMAkxCTAJOgkwCXNieC1uZXduYW1ldGVzdAk6L2MvcmVwby9k
-b2NrZXItc2FuZGJveC10ZXN0cmVwbwkxCWJhc2gJOgpwYW5lCTAJMgkwCToJMAlzYngtbmV3bmFt
-ZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNhbmRib3gtdGVzdHJlcG8JMQliYXNoCToKcGFuZQkwCTMJ
-MAk6CTAJc2J4LW5ld25hbWV0ZXN0CTovYy9yZXBvL2RvY2tlci1zYW5kYm94LXRlc3RyZXBvCTEJ
-YmFzaAk6CnBhbmUJMAk0CTEJOioJMAlzYngtbmV3bmFtZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNh
-bmRib3gtdGVzdHJlcG8JMQlidG9wCTovdXNyL2Jpbi9idG9wCnBhbmUJMAk1CTAJOi0JMAlzYngt
-bmV3bmFtZXRlc3QJOi9jL3JlcG8vZG9ja2VyLXNhbmRib3gtdGVzdHJlcG8JMQliYXNoCToKd2lu
-ZG93CTAJMAk6Y2xpCTAJOgliMTFkLDIwOXg1MCwwLDAsMAlvZmYKd2luZG93CTAJMQk6Y2xpMgkw
-CToJYjEyMywyMDl4NTAsMCwwLDYJb2ZmCndpbmRvdwkwCTIJOm9wZW5jb2RlCTAJOgliMTFlLDIw
-OXg1MCwwLDAsMQlvZmYKd2luZG93CTAJMwk6Y29kZXgJMAk6CWIxMWYsMjA5eDUwLDAsMCwyCW9m
-Zgp3aW5kb3cJMAk0CTpidG9wCTEJOioJY2IwMCwxMjB4MjksMCwwLDMJb2ZmCndpbmRvdwkwCTUJ
-OmxvZwkwCTotCWNiMDQsMTIweDI5LDAsMCw3CW9mZgpzdGF0ZQkwCQo=
+    # Six single-pane windows: cli, cli2, opencode, codex, btop, log.
+    # Use the caller's home directory. Preserve tabs and trailing fields during paste.
+    snapshot=$(base64 --decode <<'SBX_RESURRECT_SNAPSHOT'
+cGFuZQkwCTAJMAk6CTAJc2J4CTpfX1NCWF9IT01FX18JMQliYXNoCToKcGFuZQkwCTEJMAk6CTAJ
+c2J4CTpfX1NCWF9IT01FX18JMQliYXNoCToKcGFuZQkwCTIJMAk6CTAJc2J4CTpfX1NCWF9IT01F
+X18JMQliYXNoCToKcGFuZQkwCTMJMAk6CTAJc2J4CTpfX1NCWF9IT01FX18JMQliYXNoCToKcGFu
+ZQkwCTQJMQk6KgkwCXNieAk6X19TQlhfSE9NRV9fCTEJYnRvcAk6L3Vzci9iaW4vYnRvcApwYW5l
+CTAJNQkwCTotCTAJc2J4CTpfX1NCWF9IT01FX18JMQliYXNoCToKd2luZG93CTAJMAk6Y2xpCTAJ
+OgliMTFkLDIwOXg1MCwwLDAsMAlvZmYKd2luZG93CTAJMQk6Y2xpMgkwCToJYjEyMywyMDl4NTAs
+MCwwLDYJb2ZmCndpbmRvdwkwCTIJOm9wZW5jb2RlCTAJOgliMTFlLDIwOXg1MCwwLDAsMQlvZmYK
+d2luZG93CTAJMwk6Y29kZXgJMAk6CWIxMWYsMjA5eDUwLDAsMCwyCW9mZgp3aW5kb3cJMAk0CTpi
+dG9wCTEJOioJY2IwMCwxMjB4MjksMCwwLDMJb2ZmCndpbmRvdwkwCTUJOmxvZwkwCTotCWNiMDQs
+MTIweDI5LDAsMCw3CW9mZgpzdGF0ZQkwCQo=
 SBX_RESURRECT_SNAPSHOT
+    )
+    printf '%s\n' "${snapshot//__SBX_HOME__/"$HOME"}" > "$work_dir/resurrect-snapshot"
     if exists "$state_dir/$seed"; then
         # Resume only an unchanged installer seed, never a modified user file.
         [[ -f $state_dir/$seed && ! -L $state_dir/$seed ]] || return 0
@@ -1359,6 +1396,254 @@ else
 fi
 
 stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
+vscode_contents() {
+    cat <<'SBX_VSCODE'
+#!/usr/bin/env bash
+# Set up the tunnel once. The SBX startup kit restarts the enabled supervisor.
+set -euo pipefail
+umask 077
+binary="$HOME/.local/lib/sbx-deploy/vscode-code"
+state="$HOME/.local/state/sbx-deploy/vscode-tunnel"
+mode=${1:---setup}
+case $mode in
+    --setup|--login|--run|--status|--disable|--foreground) ;;
+    *) printf 'Usage: vscode_tunnel [--setup|--login|--status|--disable|--foreground]\n' >&2; exit 2 ;;
+esac
+(( $# <= 1 )) || { printf 'Use one tunnel command at a time.\n' >&2; exit 2; }
+if [[ $mode == --status ]]; then
+    exec "$HOME/.local/lib/sbx-deploy/vscode-status"
+fi
+# An unused startup kit must make no files or network requests.
+if [[ $mode == --run && ! -e $state/enabled ]]; then exit 0; fi
+for path in "$HOME/.local" "$HOME/.local/state" "$HOME/.local/state/sbx-deploy" "$state" "$state/cli"; do
+    if [[ -L $path || ( -e $path && ( ! -d $path || ! -O $path ) ) ]]; then
+        printf 'Unsafe tunnel state directory: %s. Preserve it and repair ownership or links.\n' "$path" >&2
+        exit 1
+    fi
+done
+if [[ ! -f $binary || ! -x $binary || -L $binary ]]; then
+    printf 'VS Code CLI is missing or unusable. Rerun the SBX installer.\n' >&2
+    exit 1
+fi
+mkdir -p -- "$state"
+for file in enabled setup.lock run.lock last-exit; do
+    if [[ -L $state/$file || ( -e $state/$file && ( ! -f $state/$file || ! -O $state/$file ) ) ]]; then
+        printf 'Unsafe tunnel state file: %s. Preserve it and repair it before retrying.\n' "$state/$file" >&2
+        exit 1
+    fi
+done
+# Keep this helper's login separate from the default VS Code keyring entry.
+export VSCODE_CLI_USE_FILE_KEYCHAIN=1
+cli=("$binary" --cli-data-dir "$state/cli")
+case $mode in
+    --disable)
+        exec 8> "$state/setup.lock"
+        flock -w 5 8
+        rm -f -- "$state/enabled"
+        # The CLI uses local IPC in this private data directory.
+        if timeout --kill-after=5s 15s "${cli[@]}" tunnel kill; then :; else
+            printf 'No active tunnel stopped. The supervisor will exit within 30 seconds.\n'
+        fi
+        exit 0
+        ;;
+    --foreground)
+        exec "${cli[@]}" tunnel --accept-server-license-terms
+        ;;
+    --run)
+        exec 9> "$state/run.lock"
+        if flock -n 9; then :; else
+            result=$?
+            if (( result == 1 )); then exit 0; fi
+            printf 'Cannot lock the tunnel supervisor.\n' >&2
+            exit "$result"
+        fi
+        child=
+        cleanup() {
+            trap - EXIT INT TERM
+            if [[ -n $child ]]; then
+                kill "$child" 2>/dev/null || :
+                wait "$child" 2>/dev/null || :
+            fi
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        while [[ -f $state/enabled ]]; do
+            # Use the saved login. Keep runtime and sign-in output out of all logs.
+            "${cli[@]}" tunnel --accept-server-license-terms </dev/null >/dev/null 2>&1 9>&- &
+            child=$!
+            result=0
+            wait "$child" || result=$?
+            child=
+            printf '%s\n' "$result" > "$state/last-exit"
+            [[ -f $state/enabled ]] || break
+            sleep 30 9>&- &
+            child=$!
+            wait "$child"
+            child=
+        done
+        exit 0
+        ;;
+esac
+# Setup is explicit and interactive. Never read pending pasted commands.
+exec 8> "$state/setup.lock"
+flock -w 5 8
+if [[ $mode == --login ]] || ! timeout --kill-after=5s 15s "${cli[@]}" tunnel user show >/dev/null 2>&1; then
+    if ! { exec 7<> /dev/tty; } 2>/dev/null; then
+        printf 'Tunnel sign-in needs a terminal. Run: vscode_tunnel\n' >&2
+        exit 1
+    fi
+    "$HOME/.local/lib/sbx-deploy/auth-vscode-browser-tty" \
+        "${cli[@]}" tunnel user login --provider github <&7 >&7 2>&7
+fi
+# Enable only after successful login. Preserve existing authentication and settings.
+if [[ ! -f $state/enabled ]]; then : > "$state/enabled"; fi
+# The startup kit uses the same lock. A second supervisor exits without a tunnel.
+if [[ $mode == --login ]]; then
+    if timeout --kill-after=5s 15s "${cli[@]}" tunnel kill >/dev/null 2>&1; then :; fi
+fi
+nohup /usr/bin/env -u BASH_ENV /bin/bash "$0" --run </dev/null >/dev/null 2>&1 7>&- 8>&- &
+exec 9> "$state/run.lock"
+started=false
+for attempt in {1..30}; do
+    if flock -n 9; then
+        flock -u 9
+    else
+        result=$?
+        if (( result == 1 )); then started=true; break; fi
+        printf 'Cannot check the tunnel supervisor lock.\n' >&2
+        exit "$result"
+    fi
+    sleep 0.1
+done
+if [[ $started != true ]]; then
+    printf 'Tunnel supervisor did not start. Inspect with: vscode_tunnel --foreground\n' >&2
+    exit 1
+fi
+printf 'Tunnel startup enabled. The background supervisor will connect now.\n'
+printf 'Check connection: vscode_status\n'
+printf 'Connect in VS Code: Remote Tunnels: Connect to Tunnel\n'
+printf 'For automatic restart, attach the Windows host startup kit once. See HOST_SETUP_WIN.md.\n'
+printf 'Stop and disable: vscode_disable\n'
+
+SBX_VSCODE
+}
+queue_helper "$HOME/.local/bin/sbx_vscode" vscode_contents
+vscode_status_contents() {
+    cat <<'SBX_VSCODE_STATUS'
+#!/usr/bin/env python3
+"""Show local tunnel status. Do not change files, authenticate, or log output."""
+import fcntl
+import json
+import locale
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import textwrap
+
+if len(sys.argv) != 1:
+    sys.exit('Usage: vscode_status')
+state = Path.home() / '.local/state/sbx-deploy/vscode-tunnel'
+binary = Path.home() / '.local/lib/sbx-deploy/vscode-code'
+width = max(32, min(80, shutil.get_terminal_size((80, 24)).columns))
+boxed = width >= 60
+utf8 = locale.getpreferredencoding(False).lower().replace('-', '') == 'utf8'
+color = sys.stdout.isatty() and os.environ.get('TERM', 'dumb') != 'dumb' and 'NO_COLOR' not in os.environ
+green, amber, muted, reset = ('\033[32m', '\033[33m', '\033[90m', '\033[0m') if color else ('', '', '', '')
+vertical, horizontal = ('│', '─') if utf8 else ('|', '-')
+corners = ('┌', '┐', '└', '┘') if utf8 else ('+', '+', '+', '+')
+
+def line(text='', style='', literal=False):
+    rows = [text] if literal else textwrap.wrap(text, width=width - 4) or ['']
+    for row in rows:
+        if boxed and len(row) <= width - 4:
+            print(f'{muted}{vertical}{reset} {style}{row}{reset}{" " * (width - 4 - len(row))} {muted}{vertical}{reset}')
+        else:
+            print(f'  {style}{row}{reset}')
+
+enabled = running = False
+connection, name, last_exit, problem, status = 'Not configured', None, None, None, 0
+try:
+    for path in (state.parent.parent.parent, state.parent.parent, state.parent, state, state / 'cli'):
+        if path.is_symlink() or (path.exists() and (not path.is_dir() or path.stat().st_uid != os.geteuid())):
+            raise ValueError('Unsafe tunnel state directory. Preserve it and repair ownership or links.')
+    if state.exists():
+        for filename in ('enabled', 'run.lock', 'last-exit'):
+            path = state / filename
+            if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != os.geteuid())):
+                raise ValueError('Unsafe tunnel state file. Preserve it and repair it before retrying.')
+        enabled = (state / 'enabled').is_file()
+        if (state / 'run.lock').is_file():
+            fd = os.open(state / 'run.lock', os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    running = True
+            finally:
+                os.close(fd)
+        if (state / 'last-exit').is_file():
+            value = (state / 'last-exit').read_text().strip()
+            last_exit = value if re.fullmatch(r'[0-9]{1,3}', value) else 'Unknown'
+        if not (state / 'cli').is_dir():
+            connection = 'Not configured'
+        else:
+            if not binary.is_file() or binary.is_symlink() or not os.access(binary, os.X_OK):
+                raise ValueError('VS Code CLI is missing or unusable. Rerun the SBX installer.')
+            result = subprocess.run(['timeout', '--kill-after=5s', '15s', str(binary),
+                                     '--cli-data-dir', str(state / 'cli'), 'tunnel', 'status'],
+                                    env={**os.environ, 'VSCODE_CLI_USE_FILE_KEYCHAIN': '1'},
+                                    capture_output=True, text=True)
+            if result.returncode:
+                status = result.returncode if result.returncode > 0 else 128 - result.returncode
+                raise ValueError(f'Local status check failed (exit {status}).')
+            data = json.loads(result.stdout)
+            if not isinstance(data, dict) or 'tunnel' not in data:
+                raise ValueError('Unsupported VS Code status response.')
+            tunnel = data['tunnel']
+            connection = 'Stopped'
+            if tunnel is not None:
+                if not isinstance(tunnel, dict) or tunnel.get('tunnel') not in ('Connected', 'Disconnected'):
+                    raise ValueError('Unsupported VS Code connection state.')
+                connection = tunnel['tunnel']
+                candidate = tunnel.get('name')
+                if isinstance(candidate, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', candidate):
+                    name = candidate
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    connection = 'Check needed'
+    problem = str(error) if isinstance(error, ValueError) and not isinstance(error, json.JSONDecodeError) else 'Local status unavailable. Run vscode_tunnel --foreground to investigate.'
+    status = status or 1
+
+print()
+if boxed:
+    print(muted + corners[0] + horizontal * (width - 2) + corners[1] + reset)
+line('VS CODE TUNNEL', green if connection == 'Connected' else amber)
+line()
+line('Connection: ' + connection, green if connection == 'Connected' else amber)
+line('Automatic startup: ' + ('Enabled; host startup kit required' if enabled else 'Disabled'))
+line('Supervisor: ' + ('Running' if running else 'Stopped'))
+if name:
+    line('Tunnel: ' + name)
+    if connection == 'Connected':
+        line('https://vscode.dev/tunnel/' + name, literal=True)
+if last_exit is not None:
+    line('Last tunnel exit: ' + last_exit, muted)
+if problem:
+    line(problem, amber)
+line()
+line('vscode_tunnel              Set up or start', literal=True)
+line('vscode_tunnel --login      Authorize again', literal=True)
+line('vscode_disable            Stop and disable', literal=True)
+if boxed:
+    print(muted + corners[2] + horizontal * (width - 2) + corners[3] + reset)
+print()
+sys.exit(status)
+SBX_VSCODE_STATUS
+}
+queue_helper "$HOME/.local/lib/sbx-deploy/vscode-status" vscode_status_contents
 tmux_wrapper="$HOME/.local/bin/tmux"
 wrapper_contents() {
     cat <<'TMUX_WRAPPER'
@@ -1378,21 +1663,23 @@ queue_helper "$HOME/.local/bin/btop" btop_wrapper_contents
 
 # Generate Python literals. Do not insert shell text directly into Python source.
 python_settings() {
-    python3 - "$oauth_access" "$oauth_refresh" "$oauth_provider" "$oauth_base_url" \
-        "$api_base_url" "$mcp_gateway_url" "$opencode_binary" "$codex_device_url" \
-        "$deploy_lock" "$credential_seconds" "$version_seconds" "$kill_seconds" <<'SBX_PYTHON_VALUES'
+    local name
+    local -a values=()
+    for name in "$@"; do
+        values+=("$name" "${!name}")
+    done
+    python3 - "${values[@]}" <<'SBX_PYTHON_VALUES'
 import sys
-names = ('oauth_access', 'oauth_refresh', 'oauth_provider', 'oauth_base_url',
-         'api_base_url', 'mcp_gateway_url', 'opencode_binary', 'codex_device_url',
-         'deploy_lock', 'credential_seconds', 'version_seconds', 'kill_seconds')
-for index, (name, value) in enumerate(zip(names, sys.argv[1:])):
-    print(f'{name} = {int(value) if index >= 9 else repr(value)}')
+for index in range(1, len(sys.argv), 2):
+    name, value = sys.argv[index:index + 2]
+    print(f'{name} = {int(value) if name.endswith("_seconds") else repr(value)}')
 SBX_PYTHON_VALUES
 }
 
 credential_check_contents() {
     printf '#!/usr/bin/env python3\n'
-    python_settings
+    python_settings oauth_access oauth_provider oauth_base_url api_base_url \
+        opencode_binary credential_seconds version_seconds kill_seconds
     cat <<'SBX_CREDENTIAL_CHECK'
 """Read-only live credential checks; never print tokens or command diagnostics."""
 import json
@@ -1584,7 +1871,7 @@ queue_managed_file "$HOME/.local/bin/sbx_check_credentials" "$work_dir/sbx_check
 
 mcp_check_contents() {
     printf '#!/usr/bin/env python3\n'
-    python_settings
+    python_settings mcp_gateway_url credential_seconds
     cat <<'SBX_MCP_CHECK'
 """Discover brokered MCP tools without executing tools or changing attachments."""
 import http.client
@@ -1804,25 +2091,9 @@ fi
 report_line() { printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3; }
 SBX_DESKTOP
     # Share wrapping, boxes, command bullets and narrow-terminal fallbacks.
+    declare -f summary_layout box_rule summary_begin summary_end summary_text summary_command
     cat <<'SBX_DESKTOP'
-summary_width=${COLUMNS:-}
-if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
-    summary_width=$(tput cols 2>/dev/null) || summary_width=80
-fi
-[[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
-summary_width=$((10#$summary_width))
-(( summary_width > 0 )) || summary_width=80
-(( summary_width <= 80 )) || summary_width=80
-box_open=false
-box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
-command_bullet='-'
-if "$utf8"; then
-    box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
-    command_bullet='•'
-fi
-SBX_DESKTOP
-    declare -f box_rule summary_begin summary_end summary_text summary_command
-    cat <<'SBX_DESKTOP'
+summary_layout
 sandbox_name=${1:-${HOSTNAME:-}}
 if [[ ! $sandbox_name =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
     sandbox_name='$sandboxName'
@@ -1859,7 +2130,7 @@ if [[ $container_state == exited || $container_state == created ]]; then
 elif [[ $status == 'Not deployed' ]]; then
     summary_text ''
     summary_text 'Sandbox Bash - deploy the desktop (choose Yes):'
-    summary_command 'bash ~/sbx_deploy.sh'
+    summary_command 'bash ~/sbx_local_opencode_deploy.sh'
 fi
 summary_text ''
 summary_end
@@ -1896,7 +2167,7 @@ SBX_DESKTOP
 }
 queue_helper "$HOME/.local/bin/desktop" desktop_contents
 
-# Private adapter selected only by auth_gh, leaving desktop clipboard tools alone.
+# Private adapter for login helpers. Leave desktop clipboard tools unchanged.
 gh_clipboard_contents() {
     cat <<'SBX_GH_CLIPBOARD'
 #!/bin/sh
@@ -1920,7 +2191,11 @@ queue_helper "$HOME/.local/lib/sbx-deploy/gh-clipboard/xclip" gh_clipboard_conte
 # Forward output live without saving authentication output to installer logs.
 openai_auth_contents() {
     printf '#!/usr/bin/env python3\n'
-    python_settings
+    case ${1-} in
+        codex) python_settings oauth_provider codex_device_url deploy_lock credential_seconds ;;
+        vscode) : ;;
+        *) python_settings opencode_binary ;;
+    esac
     cat <<'SBX_OPENAI_AUTH'
 import os
 import errno
@@ -1932,11 +2207,16 @@ import signal
 import subprocess
 import sys
 import termios
-import tempfile
 
 SBX_OPENAI_AUTH
     if [[ ${1-} == codex ]]; then
         printf '%s\n' "command = ['codex', '-c', 'model_provider=\"openai\"', '-c', 'forced_login_method=\"chatgpt\"', 'login', '--device-auth']"
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_AUTH_COMMAND'
+command = sys.argv[1:]
+if not command:
+    sys.exit('Use vscode_tunnel to start tunnel sign-in.')
+SBX_VSCODE_AUTH_COMMAND
     else
         cat <<'SBX_OPENAI_COMMAND'
 command = [opencode_binary, 'auth', 'login', 'openai',
@@ -1949,6 +2229,10 @@ ansi = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
 SBX_OPENAI_AUTH
     if [[ ${1-} == codex ]]; then
         printf '%s\n' "code_pattern = re.compile(rb'\b([A-Z0-9]{4,8}-[A-Z0-9]{4,8})\b')"
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_AUTH_PATTERN'
+code_pattern = re.compile(rb'\b(?:use|enter)(?: the)? code[: \t]+([A-Z0-9]{4}-[A-Z0-9]{4})(?![A-Z0-9-])', re.I)
+SBX_VSCODE_AUTH_PATTERN
     else
         cat <<'SBX_OPENAI_PATTERN'
 code_pattern = re.compile(rb'Enter code:[ \t]*([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)(?=[ \t\r\n])')
@@ -2016,6 +2300,17 @@ SBX_OPENAI_AUTH
             except (OSError, subprocess.SubprocessError):
                 print(f'Open this URL in your browser: {url}', flush=True)
 SBX_CODEX_BROWSER
+    elif [[ ${1-} == vscode ]]; then
+        cat <<'SBX_VSCODE_BROWSER'
+            # SBX's bridge opens the Windows host browser. Never open a local desktop browser.
+            url = 'https://github.com/login/device'
+            try:
+                subprocess.run(['/usr/local/bin/xdg-open', url],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, check=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                print(f'Open this URL in your host browser: {url}', flush=True)
+SBX_VSCODE_BROWSER
     fi
     cat <<'SBX_OPENAI_AUTH'
     status = process.wait()
@@ -2032,10 +2327,14 @@ except BaseException as error:
     raise
 finally:
     os.close(master)
-if status == 0 and command[0] == 'codex':
+SBX_OPENAI_AUTH
+    if [[ ${1-} == codex ]]; then
+        cat <<'SBX_CODEX_AUTH_CONFIG'
+if status == 0:
     # Explicit local login overrides the managed provider only after success.
-    # Installer reruns restore the host proxy default. Never edit auth.json.
+    # Installer reruns preserve the selected provider. Never edit auth.json.
     import tomlkit
+    import tempfile
     lock_fd = os.open(deploy_lock, os.O_RDONLY | os.O_NOFOLLOW)
     lock_result = subprocess.run(['flock', '--conflict-exit-code', '124', '--wait', str(credential_seconds), str(lock_fd)],
                                  pass_fds=(lock_fd,))
@@ -2069,6 +2368,9 @@ if status == 0 and command[0] == 'codex':
             finally:
                 if staged is not None:
                     staged.unlink(missing_ok=True)
+SBX_CODEX_AUTH_CONFIG
+    fi
+    cat <<'SBX_OPENAI_AUTH'
 sys.exit(status if status >= 0 else 128 - status)
 SBX_OPENAI_AUTH
 }
@@ -2076,6 +2378,8 @@ SBX_OPENAI_AUTH
 queue_helper "$HOME/.local/lib/sbx-deploy/auth-openai-tty" openai_auth_contents
 codex_auth_contents() { openai_auth_contents codex; }
 queue_helper "$HOME/.local/lib/sbx-deploy/auth-codex-openai-browser-tty" codex_auth_contents
+vscode_auth_contents() { openai_auth_contents vscode; }
+queue_helper "$HOME/.local/lib/sbx-deploy/auth-vscode-browser-tty" vscode_auth_contents
 
 # Interactive definitions live in one owned file; startup files hold loaders.
 {
@@ -2103,6 +2407,12 @@ alias configcat='grep -Ev "^$|^#"'
 # Netstat aliases
 alias netstat-numeric='netstat -tulpn'
 alias netstat-names='netstat -tulp'
+
+# Set up authentication and enable automatic tunnel startup.
+alias vscode_tunnel='"$HOME/.local/bin/sbx_vscode"'
+alias vscode_status='"$HOME/.local/bin/sbx_vscode" --status'
+alias vscode_disable='"$HOME/.local/bin/sbx_vscode" --disable'
+
 
 # SBX Deploy: GitHub browser login
 auth_gh() {
@@ -2390,7 +2700,6 @@ if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
     # Never put real local tokens in logs, temporary files, or backups.
     # Use the kit's lock to prevent concurrent startup imports.
     python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" <<'SBX_PROXY_OAUTH'
-import fcntl
 import json
 import math
 import os
@@ -2459,11 +2768,13 @@ with os.fdopen(lock_fd, 'w') as lock:
         stored = current.get('value')
         if not isinstance(stored, dict) or stored.get('access') != access or stored.get('refresh') != refresh:
             sys.exit('Managed OpenCode credential ID contains local data; refusing to replace it.')
-    if current and current.get('value') == value:
-        if current.get('active') is not True:
-            run('switch', 'openai', wanted['id'])
-            Path(changed).touch()
-    else:
+    # Keep the saved selection. An inactive managed login is also a saved choice.
+    if ((current and current.get('active') is not True)
+            or any(item.get('integrationID') == 'openai'
+                   and item.get('id') != wanted['id'] and item.get('active') is True
+                   for item in existing)):
+        sys.exit(0)
+    if not current or current.get('value') != value:
         run('import', payload=json.dumps([wanted]))
         Path(changed).touch()
 SBX_PROXY_OAUTH
@@ -2471,10 +2782,143 @@ fi
 if [[ -e $work_dir/changed ]]; then
     stage_done changed 'Imported masked OpenCode OAuth from host bridge'
 elif "$host_oauth"; then
-    stage_done unchanged 'Host OAuth selected; masked credentials match'
+    stage_done unchanged 'Saved authentication selection preserved'
 else
     stage_done unchanged 'Host setup needed; local credentials preserved'
 fi
+
+# Track each deployed setting. Keep user changes, including deleted settings.
+cat > "$work_dir/config_ownership.py" <<'SBX_CONFIG_OWNERSHIP'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def read_record(path):
+    if path.is_symlink() or (path.exists() and
+            (not path.is_file() or path.stat().st_uid != os.getuid())):
+        sys.exit(f'Unsafe ownership record: {path}. Preserve it and repair its ownership or links.')
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if type(value['version']) is not int or value['version'] != 1 or not isinstance(value['settings'], dict):
+            raise ValueError()
+        if any(not isinstance(key, str) or type(item) not in (str, bool)
+               for key, item in value['settings'].items()):
+            raise ValueError()
+        if path.suffix == '.pending':
+            for key in ('before', 'after'):
+                item = value[key]
+                if item is not None and (not isinstance(item, str) or len(item) != 64 or
+                                         any(char not in '0123456789abcdef' for char in item)):
+                    raise ValueError()
+        elif set(value) != {'version', 'settings'}:
+            raise ValueError()
+        return value
+    except (ValueError, KeyError, TypeError):
+        sys.exit(f'Invalid ownership record: {path}. Preserve it and restore a known good record.')
+
+
+def atomic(path, value):
+    fd, name = tempfile.mkstemp(prefix=path.name + '.tmp.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+class Ownership:
+    def __init__(self, source, directory):
+        self.source = source
+        self.directory = Path(directory)
+        if self.directory.is_symlink() or (self.directory.exists() and
+                (not self.directory.is_dir() or self.directory.stat().st_uid != os.getuid())):
+            sys.exit(f'Unsafe ownership directory: {self.directory}. Repair its ownership or links.')
+        self.path = self.directory / (digest(str(source).encode()) + '.json')
+        self.pending = self.path.with_suffix('.pending')
+        self.saved = read_record(self.path)
+        self.transaction = read_record(self.pending)
+        self.before = digest(source.read_bytes()) if source.exists() else None
+        active = self.saved
+        if self.transaction:
+            if self.before == self.transaction['after']:
+                active = self.transaction
+            elif self.before != self.transaction['before']:
+                sys.exit(f'Configuration changed during an interrupted update: {source}. '
+                         'Preserve the file and ownership records. Restore the pre-update file '
+                         'from its deployment backup, then rerun.')
+        self.settings = dict(active['settings']) if active else {}
+
+    def unknown(self, label):
+        sys.exit(f'Unknown deployment ownership: {self.source}, setting {label}. '
+                 f'File preserved. Move the config and these records, if present, to safe backup paths: '
+                 f'{self.path}, {self.pending}. Rerun to create managed defaults. '
+                 'Copy your custom settings into the new config. Keep the backups. '
+                 'Do not copy credentials into deployment records.')
+
+    def select(self, data, desired, prefix=()):
+        selected = {}
+        for key, wanted in desired.items():
+            location = prefix + (key,)
+            label = '.'.join(location)
+            present = key in data
+            if isinstance(wanted, dict):
+                current = data.get(key, {})
+                if not isinstance(current, dict):
+                    sys.exit(f'Expected an object or table at {label} in {self.source}. File preserved.')
+                children = self.select(current, wanted, location)
+                if children:
+                    selected[key] = children
+                continue
+            if label in self.settings:
+                if not present or type(data[key]) is not type(self.settings[label]) or data[key] != self.settings[label]:
+                    continue
+            elif present:
+                # Matching values need no change. Do not claim their ownership.
+                if type(data[key]) is type(wanted) and data[key] == wanted:
+                    continue
+                self.unknown(label)
+            selected[key] = wanted
+            self.settings[label] = wanted
+        return selected
+
+    def prepare(self, staged):
+        after = digest(staged.read_bytes()) if staged.exists() else self.before
+        record = dict(version=1, settings=self.settings)
+        if self.saved == record and not self.transaction:
+            return
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        pending = dict(record, before=self.before, after=after)
+        if self.transaction != pending:
+            atomic(self.pending, pending)
+
+    def commit(self):
+        if not self.transaction:
+            return
+        if self.before != self.transaction['after']:
+            sys.exit(f'Configuration publication did not finish: {self.source}. Rerun the installer.')
+        record = dict(version=1, settings=self.transaction['settings'])
+        if self.saved != record:
+            atomic(self.path, record)
+        self.pending.unlink()
+
+
+if __name__ == '__main__':
+    Ownership(Path(sys.argv[1]), sys.argv[2]).commit()
+SBX_CONFIG_OWNERSHIP
 
 stage_begin 'OpenCode defaults' 'Checking shared models and MCP gateway'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
@@ -2489,8 +2933,8 @@ if exists "$opencode_config"; then
         die "OpenCode configuration must be a readable regular file, not a symlink: $opencode_config"
 fi
 # Mask JSONC comments and trailing commas without changing character offsets.
-# Replace only managed model and gateway settings. Preserve other text and comments.
-python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" <<'SBX_OPENCODE_MODEL'
+# Update owned settings. Preserve user overrides, other text, and comments.
+PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
 import re
@@ -2499,6 +2943,8 @@ import sys
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = ('openai/' + model for model in sys.argv[3:5])
 gateway_url = sys.argv[5]
+from config_ownership import Ownership
+ownership = Ownership(source, sys.argv[6])
 desired = {
     "model": main_model,
     "mcp": {"mcp-gateway": {"type": "remote", "url": gateway_url, "enabled": True}},
@@ -2526,13 +2972,28 @@ clean = re.sub(tokens, lambda m: m[0] if m[0].startswith('"') else
 clean = re.sub(r'"(?:\\.|[^"\\])*"|,(\s*[}\]])',
                lambda m: ' ' + m[1] if m[1] is not None else m[0], clean)
 try:
-    data = json.loads(clean)
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Duplicate configuration key. Remove duplicate keys before rerun.')
+            result[key] = value
+        return result
+    data = json.loads(clean, object_pairs_hook=unique_object)
 except ValueError as error:
     sys.exit(f"Cannot parse OpenCode configuration {source}: {error}")
 if not isinstance(data, dict):
     sys.exit(f"OpenCode configuration must contain an object: {source}")
 
-# Visit only managed object paths, including duplicate keys. Preserve other settings.
+gateway = data.get('mcp', {}).get('mcp-gateway', {}) if isinstance(data.get('mcp', {}), dict) else {}
+if isinstance(gateway, dict) and ('command' in gateway or gateway.get('type', 'remote') != 'remote'):
+    if any(key.startswith('mcp.mcp-gateway.') for key in ownership.settings):
+        del desired['mcp']
+    else:
+        ownership.unknown('mcp.mcp-gateway')
+desired = ownership.select(data, desired)
+
+# Visit only managed object paths. Preserve other settings.
 # Stop if a managed object has an unexpected type.
 decoder = json.JSONDecoder()
 edits = []
@@ -2583,6 +3044,7 @@ for start, end, replacement in sorted(edits, reverse=True):
 if updated != original or not source.exists():
     with staged.open('w', encoding='utf-8', newline='') as handle:
         handle.write(updated)
+ownership.prepare(staged)
 SBX_OPENCODE_MODEL
 install_opencode_model() (
     local staged=
@@ -2600,10 +3062,12 @@ install_opencode_model() (
 )
 if [[ -f $work_dir/opencode-model.json ]]; then
     install_opencode_model
-    stage_done changed 'Sol/Luna defaults; shared MCP gateway'
+    stage_done changed 'Owned defaults updated; overrides preserved'
 else
-    stage_done unchanged 'Shared models and MCP gateway match'
+    stage_done unchanged 'Owned defaults checked; overrides preserved'
 fi
+python3 "$work_dir/config_ownership.py" "$opencode_config" "$log_dir/config-ownership"
+
 stage_begin 'Codex defaults' 'Checking models, host OAuth and MCP gateway'
 codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
 [[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
@@ -2614,8 +3078,8 @@ if exists "$codex_config"; then
 fi
 # TOMLKit preserves comments and unrelated settings, including other MCP servers.
 # Parse before publishing; matching settings leave the existing file untouched.
-python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
-    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" <<'SBX_CODEX_MODEL'
+PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
+    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_CODEX_MODEL'
 from pathlib import Path
 import sys
 import tomlkit
@@ -2624,44 +3088,44 @@ source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
 host_oauth, provider_id, base_url, access = sys.argv[5:9]
 gateway_url = sys.argv[9]
+from config_ownership import Ownership
+ownership = Ownership(source, sys.argv[10])
 existed = source.exists()
 original = source.read_bytes().decode('utf-8') if existed else ''
-Path(str(staged) + '.input').write_text(original, encoding='utf-8')
+Path(str(staged) + '.input').write_bytes(original.encode('utf-8'))
 Path(str(staged) + '.exists').write_text(str(existed))
 try:
     config = tomlkit.parse(original)
 except tomlkit.exceptions.ParseError:
     sys.exit(f'Cannot parse Codex configuration: {source}')
-if 'agents' not in config:
-    config['agents'] = tomlkit.table()
-agents = config['agents']
-if not isinstance(agents, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit(f'Codex agents settings must contain a table: {source}')
+servers = config.get('mcp_servers', {})
+gateway = servers.get('mcp-gateway', {}) if hasattr(servers, 'get') else {}
+desired = {
+    'model': main_model,
+    'agents': {'enabled': True, 'default_subagent_model': subagent_model},
+    'mcp_servers': {'mcp-gateway': {'url': gateway_url, 'enabled': True}},
+}
+if hasattr(gateway, 'get') and 'command' in gateway:
+    if any(key.startswith('mcp_servers.mcp-gateway.') for key in ownership.settings):
+        del desired['mcp_servers']
+    else:
+        ownership.unknown('mcp_servers.mcp-gateway')
+# Unwrap TOMLKit values for ownership checks. Keep its document for editing.
+selected = ownership.select(config.unwrap(), desired)
 changed = False
-if 'mcp_servers' not in config:
-    config['mcp_servers'] = tomlkit.table()
-servers = config['mcp_servers']
-if not isinstance(servers, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit('Codex mcp_servers must be a table.')
-if 'mcp-gateway' not in servers:
-    servers['mcp-gateway'] = tomlkit.table()
-gateway = servers['mcp-gateway']
-if not isinstance(gateway, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit('Codex mcp-gateway must be a table.')
-if 'command' in gateway:
-    sys.exit('Codex mcp-gateway uses stdio; refusing to replace user settings.')
-for key, value in (('url', gateway_url), ('enabled', True)):
-    if gateway.get(key) != value:
-        gateway[key] = value
-        changed = True
-for table, key, value in (
-    (config, 'model', main_model),
-    (agents, 'enabled', True),
-    (agents, 'default_subagent_model', subagent_model),
-):
-    if table.get(key) != value:
-        table[key] = value
-        changed = True
+
+def apply(table, wanted):
+    global changed
+    for key, value in wanted.items():
+        if isinstance(value, dict):
+            if key not in table:
+                table[key] = tomlkit.table()
+            apply(table[key], value)
+        elif table.get(key) != value:
+            table[key] = value
+            changed = True
+
+apply(config, selected)
 if host_oauth == 'true':
     if 'model_providers' not in config:
         config['model_providers'] = tomlkit.table()
@@ -2679,13 +3143,17 @@ if host_oauth == 'true':
     if provider_id not in providers:
         providers[provider_id] = desired
         changed = True
-    if config.get('model_provider') != provider_id:
+    # An explicit provider is a saved choice. A local auth file also preserves
+    # the built-in provider when model_provider is absent. Do not read its tokens.
+    auth_file = source.parent / 'auth.json'
+    if 'model_provider' not in config and not (auth_file.exists() or auth_file.is_symlink()):
         config['model_provider'] = provider_id
         changed = True
 # Do not create or copy auth.json. The provider contains only the shared Docker placeholder.
 # The host proxy manages real tokens and refresh. Successful local login restores the built-in provider.
 if changed or not source.exists():
-    staged.write_text(tomlkit.dumps(config), encoding='utf-8')
+    staged.write_text(tomlkit.dumps(config), encoding='utf-8', newline='')
+ownership.prepare(staged)
 SBX_CODEX_MODEL
 install_codex_model() (
     local staged=
@@ -2702,10 +3170,12 @@ install_codex_model() (
 )
 if [[ -f $work_dir/codex-model.toml ]]; then
     install_codex_model
-    stage_done changed 'Sol/Luna defaults; shared MCP gateway; OAuth when available'
+    stage_done changed 'Owned defaults updated; saved authentication preserved'
 else
-    stage_done unchanged 'Shared models, provider and MCP gateway match'
+    stage_done unchanged 'Owned defaults checked; overrides preserved'
 fi
+
+python3 "$work_dir/config_ownership.py" "$codex_config" "$log_dir/config-ownership"
 
 # Read-only probes cache successes by local setup. Store hashes, never credential values.
 # Host secrets can change without detection. SBX_CHECK_AUTH=1 repeats cached checks.
@@ -2742,6 +3212,10 @@ check_credential() {
         stage_done unchanged 'Previously verified (cached)'
         return 0
     fi
+    # Invalidate old success before a fresh probe, including failures or interruption.
+    if exists "$cache"; then
+        rm -f -- "$cache"
+    fi
     code= status=0
     if [[ $service == github ]]; then
         if output=$(timeout --kill-after="${kill_seconds}s" 25s env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 GH_DEBUG= \
@@ -2757,7 +3231,7 @@ check_credential() {
         fi
     elif ! "$host_oauth"; then
         openai_auth_status='needs attention'
-        record_issue openai OpenAI 'Host OAuth is not configured.' $'Windows PowerShell:\n  sbx secret set openai --oauth\nConfigure the OAuth binding using HOST_SETUP_WIN.md, then restart the sandbox.\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+        record_issue openai OpenAI 'Host OAuth is not configured.' $'Windows PowerShell:\n  sbx secret set openai --oauth\nConfigure the OAuth binding using HOST_SETUP_WIN.md, then restart the sandbox.\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_local_opencode_deploy.sh'
         stage_done attention 'Host OAuth needs setup; see final actions'
         return 0
     else
@@ -2805,7 +3279,7 @@ check_credential() {
         5??) actions='Service or proxy error; retry later. If it persists, inspect host proxy logs using HOST_SETUP_WIN.md.' ;;
         *) actions='Check sandbox connectivity, proxy and CA trust using HOST_SETUP_WIN.md. A timeout does not prove bad credentials.' ;;
     esac
-    actions+=$'\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_deploy.sh'
+    actions+=$'\nSandbox Bash after repair:\n  SBX_CHECK_AUTH=1 bash ~/sbx_local_opencode_deploy.sh'
     record_issue "$service" "$2" "$detail" "$actions"
     stage_done attention 'Authentication unverified; see final actions'
 }
@@ -2899,8 +3373,18 @@ if [[ $webtop_choice == y ]]; then
     stage_operation 'Creating Ubuntu XFCE desktop (first download may take time)'
     # Docker reuses a local image; never pull/update it on an identical rerun.
     # If a failed start leaves a matching container, use docker start webtop.
-    docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
-        -p 3001:3001 -v webtop-config:/config "$webtop_image"
+    if docker run -d --name webtop --shm-size=1gb --restart unless-stopped \
+        -p 3001:3001 -v webtop-config:/config "$webtop_image" 2>&1 | tee -- "$work_dir/webtop-start.output"; then
+        :
+    else
+        status=$?
+        if grep -Fq '403 Forbidden' "$work_dir/webtop-start.output"; then
+            record_issue webtop-registry 'Webtop registry access' \
+                'Registry access returned 403 Forbidden. The host network policy can block Webtop downloads.' \
+                $'Windows PowerShell:\n  sbx policy check network lscr.io:443\nIf no allow rule matches:\n  sbx policy allow network lscr.io:443\nThis changes the global policy. An explicit deny takes precedence.\nSee HOST_SETUP_WIN.md for other registry domains.\nSandbox Bash after repair:\n  bash ~/sbx_local_opencode_deploy.sh'
+        fi
+        die 'Webtop could not start; see the Docker error and final actions.' "$status"
+    fi
     webtop_status=running
     stage_done changed 'Deployed Ubuntu XFCE desktop'
 elif [[ -n $webtop_id ]]; then
