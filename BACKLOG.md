@@ -1,10 +1,28 @@
-# Reported issues
+﻿# Open work
 
-Check each report against current code before making changes. AI reports below
-are unverified. Record reproduction evidence. Update or close each entry after investigation.
+Check each report against current code before changing behavior. Keep real
+credentials out of logs and shared output.
 
-- [Unreproduced] Codex "broken pipe" during selection or copying: investigate if it recurs. Record reproduction steps, versions, and relevant output.
-- [Sandbox reproduced in both harnesses; cause unverified] OpenCode v2.2.6 device login via `auth_opencode_openai --force` returned `Request failed: 401` while waiting for authorization. Codex CLI 0.167.0 via `auth_codex_openai --force` returned `401 Unauthorized: Invalid client specified` during device code exchange. Host SBX is v0.51.0; `sbx secret ls` confirms global OpenAI OAuth is configured. Host model-access checks passed for both harnesses. After deployment and a saved template on fresh sandbox `newtest1`, Codex returned the same device exchange error (request ID `cef289f1-c273-4ad4-991d-463358618e33`). Both OpenAI model-access checks passed. GitHub returned HTTP 401. Host GitHub access passed. A host daemon restart cleared the sandbox GitHub 401; all three credential checks then passed. Codex device login still failed after restart with the same error (request ID `2e9e9797-38c5-4efb-ad95-9e8f96704552`). The terminal also reported exit 137 before reconnection; its cause is unknown. Proxy debug output for `newtest1` shows `auth.openai.com:443` allowed, HTTPS interception active, and `custom_secret_replacement_skipped` with reason `no_target_match`. This excerpt does not show the failing HTTP request or establish the cause. Direct Codex login with the same provider options and `login --device-auth`, without the deployment clipboard/browser helper, also failed with the same error (request ID `7b20b7fd-564d-4b3e-89d7-e3e7307b245d`). The helper is not required to trigger the failure. Local login preservation remains untested. Investigate the clients and host proxy before changing behavior.
+- [Unreproduced] Codex "broken pipe" during selection or copying. Investigate if
+  it recurs. Record the steps, versions, and relevant output.
 
-- [Repair implemented; fixture checks passed; sandbox checks pending] Preserve local authentication choices on rerun. OpenCode keeps the saved OpenAI selection. Codex keeps an explicit provider or an existing local login. Check fresh setup, local login followed by rerun, unchanged reruns, and host login selection in both harnesses.
-- [Repair implemented; fixture checks passed; sandbox checks pending] Preserve deliberate model and MCP overrides. Both harnesses now record each managed setting under `~/.local/state/sbx-deploy/config-ownership` (or the selected state directory). Keep changed or deleted settings. Stop with recovery instructions when an existing setting has no ownership record. Pending records allow interrupted writes to finish on rerun. Fixture checks cover upgrades, overrides, deleted settings, transport changes, unknown ownership, interrupted writes, and unchanged reruns. Sandbox newtest1 confirmed ownership stops for both older configs. Setup completed after migration. The next rerun reported 0 changed and 0 warnings; both defaults stages and cached authentication checks were skipped (run-20261109T031152Z-OP5I1h.log). Review both config backups and restore custom or unrelated settings before closing migration. Fresh setup, custom override preservation, and interrupted-run sandbox checks remain pending. For unknown ownership, move the config and the matching records named in the error to safe backup paths. Rerun to create managed defaults. Copy custom settings into the new config, then rerun. Keep the backup. Do not copy credentials into ownership records.
+- [Cause unknown] OpenAI device login returns HTTP 401 in both harnesses.
+  OpenCode v2.2.6 reports `Request failed: 401`. Codex CLI 0.167.0 reports
+  `401 Unauthorized: Invalid client specified`. Host SBX is v0.51.0.
+  On `newtest1`, Codex also fails without the deployment login helper and after
+  a host daemon restart. Direct-login request ID:
+  `7b20b7fd-564d-4b3e-89d7-e3e7307b245d`.
+  Model-access checks pass. Proxy debug output shows HTTPS interception and
+  `custom_secret_replacement_skipped` with `no_target_match`. This does not
+  establish the cause. Investigate the clients and host proxy before changing
+  behavior. Exit 137 was also reported before reconnection; its cause is unknown.
+
+- [Sandbox validation pending] Local authentication preservation. Fixture checks
+  pass. Check fresh authentication selection and a successful local login followed
+  by rerun in both harnesses. The device-login failure above blocks the local-login
+  check.
+
+- [Sandbox validation pending] Model and MCP override preservation. Fixture checks
+  pass. Check fresh setup, custom overrides, and interrupted runs in both harnesses.
+  Review the OpenCode and Codex config backups from the `newtest1` migration.
+  Restore any custom or unrelated settings. Keep the backups until review is done.
