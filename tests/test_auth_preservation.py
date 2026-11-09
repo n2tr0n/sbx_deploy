@@ -96,17 +96,30 @@ class AuthenticationSelection(unittest.TestCase):
             original += ('[agents]\nenabled = true\ndefault_subagent_model = "sub"\n'
                          '[mcp_servers.mcp-gateway]\nurl = "gateway"\nenabled = true\n')
             source.write_text(original)
+            ownership_module = types.ModuleType('config_ownership')
+            exec(compile(payload('SBX_CONFIG_OWNERSHIP'), 'Ownership payload', 'exec'), ownership_module.__dict__)
+            state = Path(root) / 'ownership'
+            state.mkdir()
+            baseline = state / (ownership_module.digest(str(source).encode()) + '.json')
+            baseline.write_text(json.dumps({'version': 1, 'settings': {
+                'model': 'main', 'agents.enabled': True, 'agents.default_subagent_model': 'sub',
+                'mcp_servers.mcp-gateway.url': 'gateway', 'mcp_servers.mcp-gateway.enabled': True}}))
+            class Document(dict):
+                def unwrap(self):
+                    return dict(self)
+            tomlkit.parse = lambda text: Document(tomllib.loads(text))
             if local_auth:
                 (Path(root) / 'auth.json').write_text('private fixture; do not read')
             argv = ['fixture', str(source), str(staged), 'main', 'sub',
-                    str(host).lower(), 'sbx-chatgpt', 'base', 'masked-access', 'gateway']
-            with patch.dict(sys.modules, tomlkit=tomlkit), patch.object(sys, 'argv', argv):
+                    str(host).lower(), 'sbx-chatgpt', 'base', 'masked-access', 'gateway', str(state)]
+            with patch.dict(sys.modules, tomlkit=tomlkit, config_ownership=ownership_module), \
+                    patch.object(os, 'getuid', lambda: 0, create=True), patch.object(sys, 'argv', argv):
                 exec(compile(payload('SBX_CODEX_MODEL'), 'Codex payload', 'exec'), {})
                 self.assertEqual(source.read_text(), original)
                 first = copy.deepcopy(written)
                 # Feed the generated configuration back to check an unchanged rerun.
                 if written:
-                    tomlkit.parse = lambda text: copy.deepcopy(first[0])
+                    tomlkit.parse = lambda text: Document(copy.deepcopy(first[0]))
                     written.clear()
                     staged.unlink()
                     exec(compile(payload('SBX_CODEX_MODEL'), 'Codex payload', 'exec'), {})

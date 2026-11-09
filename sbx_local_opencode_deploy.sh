@@ -29,6 +29,7 @@
 #     Preserve selected authentication and existing local credentials on rerun.
 # 11. Use GPT-6.1 Sol for main agents and GPT-6 Luna for subagents in both harnesses.
 #     Connect both harnesses to the shared host-managed MCP gateway.
+#     Track setting ownership. Preserve overrides. Stop if ownership is unknown.
 # 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
 #     Install check_credentials and check_mcp. Cache successes; SBX_CHECK_AUTH=1 checks again.
 #     Clear old successes before fresh checks.
@@ -2841,6 +2842,136 @@ else
     stage_done unchanged 'Host setup needed; local credentials preserved'
 fi
 
+# Track each deployed setting. Keep user changes, including deleted settings.
+cat > "$work_dir/config_ownership.py" <<'SBX_CONFIG_OWNERSHIP'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def read_record(path):
+    if path.is_symlink() or (path.exists() and
+            (not path.is_file() or path.stat().st_uid != os.getuid())):
+        sys.exit(f'Unsafe ownership record: {path}. Preserve it and repair its ownership or links.')
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if type(value['version']) is not int or value['version'] != 1 or not isinstance(value['settings'], dict):
+            raise ValueError()
+        if any(not isinstance(key, str) or type(item) not in (str, bool)
+               for key, item in value['settings'].items()):
+            raise ValueError()
+        if path.suffix == '.pending':
+            for key in ('before', 'after'):
+                item = value[key]
+                if item is not None and (not isinstance(item, str) or len(item) != 64 or
+                                         any(char not in '0123456789abcdef' for char in item)):
+                    raise ValueError()
+        elif set(value) != {'version', 'settings'}:
+            raise ValueError()
+        return value
+    except (ValueError, KeyError, TypeError):
+        sys.exit(f'Invalid ownership record: {path}. Preserve it and restore a known good record.')
+
+
+def atomic(path, value):
+    fd, name = tempfile.mkstemp(prefix=path.name + '.tmp.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+class Ownership:
+    def __init__(self, source, directory):
+        self.source = source
+        self.directory = Path(directory)
+        if self.directory.is_symlink() or (self.directory.exists() and
+                (not self.directory.is_dir() or self.directory.stat().st_uid != os.getuid())):
+            sys.exit(f'Unsafe ownership directory: {self.directory}. Repair its ownership or links.')
+        self.path = self.directory / (digest(str(source).encode()) + '.json')
+        self.pending = self.path.with_suffix('.pending')
+        self.saved = read_record(self.path)
+        self.transaction = read_record(self.pending)
+        self.before = digest(source.read_bytes()) if source.exists() else None
+        active = self.saved
+        if self.transaction:
+            if self.before == self.transaction['after']:
+                active = self.transaction
+            elif self.before != self.transaction['before']:
+                sys.exit(f'Configuration changed during an interrupted update: {source}. '
+                         'Preserve the file and ownership records. Restore the pre-update file '
+                         'from its deployment backup, then rerun.')
+        self.settings = dict(active['settings']) if active else {}
+
+    def unknown(self, label):
+        sys.exit(f'Unknown deployment ownership: {self.source}, setting {label}. '
+                 f'File preserved. Move the config and these records, if present, to safe backup paths: '
+                 f'{self.path}, {self.pending}. Rerun to create managed defaults. '
+                 'Copy your custom settings into the new config. Keep the backups. '
+                 'Do not copy credentials into deployment records.')
+
+    def select(self, data, desired, prefix=()):
+        selected = {}
+        for key, wanted in desired.items():
+            location = prefix + (key,)
+            label = '.'.join(location)
+            present = key in data
+            if isinstance(wanted, dict):
+                current = data.get(key, {})
+                if not isinstance(current, dict):
+                    sys.exit(f'Expected an object or table at {label} in {self.source}. File preserved.')
+                children = self.select(current, wanted, location)
+                if children:
+                    selected[key] = children
+                continue
+            if label in self.settings:
+                if not present or type(data[key]) is not type(self.settings[label]) or data[key] != self.settings[label]:
+                    continue
+            elif present:
+                self.unknown(label)
+            selected[key] = wanted
+            self.settings[label] = wanted
+        return selected
+
+    def prepare(self, staged):
+        after = digest(staged.read_bytes()) if staged.exists() else self.before
+        record = dict(version=1, settings=self.settings)
+        if self.saved == record and not self.transaction:
+            return
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        pending = dict(record, before=self.before, after=after)
+        if self.transaction != pending:
+            atomic(self.pending, pending)
+
+    def commit(self):
+        if not self.transaction:
+            return
+        if self.before != self.transaction['after']:
+            sys.exit(f'Configuration publication did not finish: {self.source}. Rerun the installer.')
+        record = dict(version=1, settings=self.transaction['settings'])
+        if self.saved != record:
+            atomic(self.path, record)
+        self.pending.unlink()
+
+
+if __name__ == '__main__':
+    Ownership(Path(sys.argv[1]), sys.argv[2]).commit()
+SBX_CONFIG_OWNERSHIP
+
 stage_begin 'OpenCode defaults' 'Checking shared models and MCP gateway'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 [[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
@@ -2854,8 +2985,8 @@ if exists "$opencode_config"; then
         die "OpenCode configuration must be a readable regular file, not a symlink: $opencode_config"
 fi
 # Mask JSONC comments and trailing commas without changing character offsets.
-# Replace only managed model and gateway settings. Preserve other text and comments.
-python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" <<'SBX_OPENCODE_MODEL'
+# Update owned settings. Preserve user overrides, other text, and comments.
+PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
 import re
@@ -2864,6 +2995,8 @@ import sys
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = ('openai/' + model for model in sys.argv[3:5])
 gateway_url = sys.argv[5]
+from config_ownership import Ownership
+ownership = Ownership(source, sys.argv[6])
 desired = {
     "model": main_model,
     "mcp": {"mcp-gateway": {"type": "remote", "url": gateway_url, "enabled": True}},
@@ -2891,13 +3024,28 @@ clean = re.sub(tokens, lambda m: m[0] if m[0].startswith('"') else
 clean = re.sub(r'"(?:\\.|[^"\\])*"|,(\s*[}\]])',
                lambda m: ' ' + m[1] if m[1] is not None else m[0], clean)
 try:
-    data = json.loads(clean)
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Duplicate configuration key. Remove duplicate keys before rerun.')
+            result[key] = value
+        return result
+    data = json.loads(clean, object_pairs_hook=unique_object)
 except ValueError as error:
     sys.exit(f"Cannot parse OpenCode configuration {source}: {error}")
 if not isinstance(data, dict):
     sys.exit(f"OpenCode configuration must contain an object: {source}")
 
-# Visit only managed object paths, including duplicate keys. Preserve other settings.
+gateway = data.get('mcp', {}).get('mcp-gateway', {}) if isinstance(data.get('mcp', {}), dict) else {}
+if isinstance(gateway, dict) and ('command' in gateway or gateway.get('type', 'remote') != 'remote'):
+    if any(key.startswith('mcp.mcp-gateway.') for key in ownership.settings):
+        del desired['mcp']
+    else:
+        ownership.unknown('mcp.mcp-gateway')
+desired = ownership.select(data, desired)
+
+# Visit only managed object paths. Preserve other settings.
 # Stop if a managed object has an unexpected type.
 decoder = json.JSONDecoder()
 edits = []
@@ -2948,6 +3096,7 @@ for start, end, replacement in sorted(edits, reverse=True):
 if updated != original or not source.exists():
     with staged.open('w', encoding='utf-8', newline='') as handle:
         handle.write(updated)
+ownership.prepare(staged)
 SBX_OPENCODE_MODEL
 install_opencode_model() (
     local staged=
@@ -2965,10 +3114,12 @@ install_opencode_model() (
 )
 if [[ -f $work_dir/opencode-model.json ]]; then
     install_opencode_model
-    stage_done changed 'Sol/Luna defaults; shared MCP gateway'
+    stage_done changed 'Owned defaults updated; overrides preserved'
 else
-    stage_done unchanged 'Shared models and MCP gateway match'
+    stage_done unchanged 'Owned defaults checked; overrides preserved'
 fi
+python3 "$work_dir/config_ownership.py" "$opencode_config" "$log_dir/config-ownership"
+
 stage_begin 'Codex defaults' 'Checking models, host OAuth and MCP gateway'
 codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
 [[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
@@ -2979,8 +3130,8 @@ if exists "$codex_config"; then
 fi
 # TOMLKit preserves comments and unrelated settings, including other MCP servers.
 # Parse before publishing; matching settings leave the existing file untouched.
-python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
-    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" <<'SBX_CODEX_MODEL'
+PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
+    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_CODEX_MODEL'
 from pathlib import Path
 import sys
 import tomlkit
@@ -2989,44 +3140,44 @@ source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
 host_oauth, provider_id, base_url, access = sys.argv[5:9]
 gateway_url = sys.argv[9]
+from config_ownership import Ownership
+ownership = Ownership(source, sys.argv[10])
 existed = source.exists()
 original = source.read_bytes().decode('utf-8') if existed else ''
-Path(str(staged) + '.input').write_text(original, encoding='utf-8')
+Path(str(staged) + '.input').write_bytes(original.encode('utf-8'))
 Path(str(staged) + '.exists').write_text(str(existed))
 try:
     config = tomlkit.parse(original)
 except tomlkit.exceptions.ParseError:
     sys.exit(f'Cannot parse Codex configuration: {source}')
-if 'agents' not in config:
-    config['agents'] = tomlkit.table()
-agents = config['agents']
-if not isinstance(agents, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit(f'Codex agents settings must contain a table: {source}')
+servers = config.get('mcp_servers', {})
+gateway = servers.get('mcp-gateway', {}) if hasattr(servers, 'get') else {}
+desired = {
+    'model': main_model,
+    'agents': {'enabled': True, 'default_subagent_model': subagent_model},
+    'mcp_servers': {'mcp-gateway': {'url': gateway_url, 'enabled': True}},
+}
+if hasattr(gateway, 'get') and 'command' in gateway:
+    if any(key.startswith('mcp_servers.mcp-gateway.') for key in ownership.settings):
+        del desired['mcp_servers']
+    else:
+        ownership.unknown('mcp_servers.mcp-gateway')
+# Unwrap TOMLKit values for ownership checks. Keep its document for editing.
+selected = ownership.select(config.unwrap(), desired)
 changed = False
-if 'mcp_servers' not in config:
-    config['mcp_servers'] = tomlkit.table()
-servers = config['mcp_servers']
-if not isinstance(servers, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit('Codex mcp_servers must be a table.')
-if 'mcp-gateway' not in servers:
-    servers['mcp-gateway'] = tomlkit.table()
-gateway = servers['mcp-gateway']
-if not isinstance(gateway, (tomlkit.items.Table, tomlkit.items.InlineTable)):
-    sys.exit('Codex mcp-gateway must be a table.')
-if 'command' in gateway:
-    sys.exit('Codex mcp-gateway uses stdio; refusing to replace user settings.')
-for key, value in (('url', gateway_url), ('enabled', True)):
-    if gateway.get(key) != value:
-        gateway[key] = value
-        changed = True
-for table, key, value in (
-    (config, 'model', main_model),
-    (agents, 'enabled', True),
-    (agents, 'default_subagent_model', subagent_model),
-):
-    if table.get(key) != value:
-        table[key] = value
-        changed = True
+
+def apply(table, wanted):
+    global changed
+    for key, value in wanted.items():
+        if isinstance(value, dict):
+            if key not in table:
+                table[key] = tomlkit.table()
+            apply(table[key], value)
+        elif table.get(key) != value:
+            table[key] = value
+            changed = True
+
+apply(config, selected)
 if host_oauth == 'true':
     if 'model_providers' not in config:
         config['model_providers'] = tomlkit.table()
@@ -3053,7 +3204,8 @@ if host_oauth == 'true':
 # Do not create or copy auth.json. The provider contains only the shared Docker placeholder.
 # The host proxy manages real tokens and refresh. Successful local login restores the built-in provider.
 if changed or not source.exists():
-    staged.write_text(tomlkit.dumps(config), encoding='utf-8')
+    staged.write_text(tomlkit.dumps(config), encoding='utf-8', newline='')
+ownership.prepare(staged)
 SBX_CODEX_MODEL
 install_codex_model() (
     local staged=
@@ -3070,10 +3222,12 @@ install_codex_model() (
 )
 if [[ -f $work_dir/codex-model.toml ]]; then
     install_codex_model
-    stage_done changed 'Sol/Luna defaults; shared MCP gateway; OAuth when available'
+    stage_done changed 'Owned defaults updated; saved authentication preserved'
 else
-    stage_done unchanged 'Shared models, provider and MCP gateway match'
+    stage_done unchanged 'Owned defaults checked; overrides preserved'
 fi
+
+python3 "$work_dir/config_ownership.py" "$codex_config" "$log_dir/config-ownership"
 
 # Read-only probes cache successes by local setup. Store hashes, never credential values.
 # Host secrets can change without detection. SBX_CHECK_AUTH=1 repeats cached checks.
