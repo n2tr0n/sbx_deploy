@@ -26,7 +26,7 @@
 # 8. Install abbreviated-path prompts: red for root, green for other users.
 # 9. Upgrade /home/agent/.opencode/bin/opencode once per binary checksum, if installed.
 # 10. Import masked host OAuth into OpenCode. Route Codex through the same proxy.
-#     Preserve matching configuration and existing local credentials.
+#     Preserve selected authentication and existing local credentials on rerun.
 # 11. Use GPT-6.1 Sol for main agents and GPT-6 Luna for subagents in both harnesses.
 #     Connect both harnesses to the shared host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
@@ -103,7 +103,8 @@ sbx_save_and_run() {
 # Preserve edited files, reject intervening changes, and bound unattended commands.
 # Install sandbox tools, tmux configuration and an initial resurrect snapshot,
 # login helpers/terminal clipboard, and prompts;
-# default to host OAuth/proxy; check auth (SBX_CHECK_AUTH=1 rechecks); keep five logs.
+# default to host OAuth/proxy; preserve login choices on rerun; keep five logs.
+# Check auth (SBX_CHECK_AUTH=1 rechecks).
 # Connect OpenCode/Codex to the shared sandbox MCP gateway.
 # Run check_credentials for auth/source checks; check_mcp lists brokered MCP tools.
 # Summarize results and detected issues; show checks, desktop access and log path.
@@ -287,7 +288,7 @@ done <<'SBX_BANNER'
  \_  _                                                                 _  _/
    \/     _______   _______ ___   ___                                   \/
    /\    /  _____/ /  __   \\  \ /  /                                   /\
-  /  \   \____  \ /  /_/  <  \  V  /       .:: S B X   D E P L O Y ::. /  \
+  /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
   \  /  —————/  //  /_/   /  /  \  \                                   \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
    /\  \__  Nitron's Deployment Script for SBX v0.3a               __/  /\
@@ -2388,7 +2389,7 @@ finally:
     os.close(master)
 if status == 0 and command[0] == 'codex':
     # Explicit local login overrides the managed provider only after success.
-    # Installer reruns restore the host proxy default. Never edit auth.json.
+    # Installer reruns preserve the selected provider. Never edit auth.json.
     import tomlkit
     lock_fd = os.open(deploy_lock, os.O_RDONLY | os.O_NOFOLLOW)
     lock_result = subprocess.run(['flock', '--conflict-exit-code', '124', '--wait', str(credential_seconds), str(lock_fd)],
@@ -2821,11 +2822,13 @@ with os.fdopen(lock_fd, 'w') as lock:
         stored = current.get('value')
         if not isinstance(stored, dict) or stored.get('access') != access or stored.get('refresh') != refresh:
             sys.exit('Managed OpenCode credential ID contains local data; refusing to replace it.')
-    if current and current.get('value') == value:
-        if current.get('active') is not True:
-            run('switch', 'openai', wanted['id'])
-            Path(changed).touch()
-    else:
+    # Keep the saved selection. An inactive managed login is also a saved choice.
+    if ((current and current.get('active') is not True)
+            or any(item.get('integrationID') == 'openai'
+                   and item.get('id') != wanted['id'] and item.get('active') is True
+                   for item in existing)):
+        sys.exit(0)
+    if not current or current.get('value') != value:
         run('import', payload=json.dumps([wanted]))
         Path(changed).touch()
 SBX_PROXY_OAUTH
@@ -2833,7 +2836,7 @@ fi
 if [[ -e $work_dir/changed ]]; then
     stage_done changed 'Imported masked OpenCode OAuth from host bridge'
 elif "$host_oauth"; then
-    stage_done unchanged 'Host OAuth selected; masked credentials match'
+    stage_done unchanged 'Saved authentication selection preserved'
 else
     stage_done unchanged 'Host setup needed; local credentials preserved'
 fi
@@ -3041,7 +3044,10 @@ if host_oauth == 'true':
     if provider_id not in providers:
         providers[provider_id] = desired
         changed = True
-    if config.get('model_provider') != provider_id:
+    # An explicit provider is a saved choice. A local auth file also preserves
+    # the built-in provider when model_provider is absent. Do not read its tokens.
+    auth_file = source.parent / 'auth.json'
+    if 'model_provider' not in config and not (auth_file.exists() or auth_file.is_symlink()):
         config['model_provider'] = provider_id
         changed = True
 # Do not create or copy auth.json. The provider contains only the shared Docker placeholder.
