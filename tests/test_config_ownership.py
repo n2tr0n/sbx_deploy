@@ -123,17 +123,44 @@ class ConfigOwnership(unittest.TestCase):
     def test_codex_interruption(self):
         self.check_interruption('codex')
 
-    def test_unknown_values_even_matching_defaults(self):
+    def test_unknown_different_values(self):
         for harness in ('opencode', 'codex'):
             if harness == 'codex' and tomlkit is None:
                 continue
             source = self.root / ('config.jsonc' if harness == 'opencode' else 'config.toml')
-            source.write_text('{"model":"openai/main"}' if harness == 'opencode' else 'model = "main"\n')
+            source.write_text('{"model":"custom"}' if harness == 'opencode' else 'model = "custom"\n')
             before = source.read_bytes()
             with self.assertRaisesRegex(SystemExit, 'Unknown deployment ownership'):
                 self.run_config(harness)
             self.assertEqual(source.read_bytes(), before)
             self.assertFalse((self.root / 'state').exists())
+
+    def test_matching_unowned_gateway(self):
+        for harness in ('opencode', 'codex'):
+            if harness == 'codex' and tomlkit is None:
+                continue
+            with self.subTest(harness=harness):
+                key = 'mcp' if harness == 'opencode' else 'mcp_servers'
+                headers_key = 'headers' if harness == 'opencode' else 'http_headers'
+                gateway = {'url': 'gateway', 'enabled': True,
+                           headers_key: {'Authorization': 'Bearer masked-fixture'}}
+                if harness == 'opencode':
+                    gateway['type'] = 'remote'
+                source = self.root / ('config.jsonc' if harness == 'opencode' else 'config.toml')
+                self.write(harness, source, {key: {'mcp-gateway': gateway}})
+                self.run_config(harness)
+                self.assertEqual(self.read(harness, source)[key]['mcp-gateway'], gateway)
+                owner = self.module.Ownership(source, self.root / 'state')
+                self.assertFalse(any(label.startswith(key + '.') for label in owner.settings))
+                before = (source.read_bytes(), source.stat().st_mtime_ns,
+                          owner.path.read_bytes(), owner.path.stat().st_mtime_ns)
+                self.assertFalse(self.run_config(harness)[1])
+                self.assertEqual(before, (source.read_bytes(), source.stat().st_mtime_ns,
+                                         owner.path.read_bytes(), owner.path.stat().st_mtime_ns))
+                # A new default must not replace a setting we do not own.
+                with self.assertRaisesRegex(SystemExit, 'Unknown deployment ownership'):
+                    self.run_config(harness, gateway='new-gateway')
+                self.assertEqual(source.read_bytes(), before[0])
 
     def test_comments_and_duplicate_keys(self):
         source = self.root / 'config.jsonc'

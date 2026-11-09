@@ -29,7 +29,7 @@
 #     Preserve selected authentication and existing local credentials on rerun.
 # 11. Use GPT-6.1 Sol for main agents and GPT-6 Luna for subagents in both harnesses.
 #     Connect both harnesses to the shared host-managed MCP gateway.
-#     Track setting ownership. Preserve overrides. Stop if ownership is unknown.
+#     Track setting ownership. Keep matching unowned settings. Stop before unowned changes.
 # 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
 #     Install check_credentials and check_mcp. Cache successes; SBX_CHECK_AUTH=1 checks again.
 #     Clear old successes before fresh checks.
@@ -2942,6 +2942,9 @@ class Ownership:
                 if not present or type(data[key]) is not type(self.settings[label]) or data[key] != self.settings[label]:
                     continue
             elif present:
+                # Matching values need no change. Do not claim their ownership.
+                if type(data[key]) is type(wanted) and data[key] == wanted:
+                    continue
                 self.unknown(label)
             selected[key] = wanted
             self.settings[label] = wanted
