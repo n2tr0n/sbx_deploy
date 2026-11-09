@@ -3,7 +3,7 @@
 One installer for OpenCode and Codex in local
 [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/).
 
-A coding sandbox your AI agent can set up, make yours, and maintain—with Docker
+An opinionated, pre-customized coding sandbox your AI agent can set up, make yours, and maintain—with Docker
 support, host-managed credentials, and layered network security.
 
 - Use either OpenCode or Codex to fix and deploy the other's setup.
