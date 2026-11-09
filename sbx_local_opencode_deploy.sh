@@ -225,7 +225,7 @@ while IFS= read -r line; do
             fi
             ;;
         9)
-            label="Nitron's Deployment Script for SBX v0.3a"
+            label="Nitron's Deployment Script for SBX v0.4a"
             line=${line/"$label"/"$banner_dark_green$label$banner_grey"}
             ;;
     esac
@@ -241,7 +241,7 @@ done <<'SBX_BANNER'
   /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
   \  /  —————/  //  /_/   /  /  \  \                                   \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX v0.3a               __/  /\
+   /\  \__  Nitron's Deployment Script for SBX v0.4a               __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
 
