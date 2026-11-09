@@ -10,7 +10,7 @@ and Bash aliases. It configures OpenCode and Codex for host credentials and the 
 To use other harnesses or providers, fork this project. Ask your coding agent to
 update the installer and authentication instructions for your requirements.
 
-**Experimental public alpha. Use only in disposable sandboxes.**
+**Experimental public alpha.**
 Tested on Windows hosts only. See [BACKLOG.md](BACKLOG.md) for known issues.
 
 ## Run
@@ -21,7 +21,7 @@ Tested on Windows hosts only. See [BACKLOG.md](BACKLOG.md) for known issues.
 - Press Enter and follow the prompts.
 - Read the final output for host setup and verification steps.
 
-Provided as-is, without warranty. Review the script before use.
+Licensed under [MIT-0](LICENSE). Review the script before use.
 See [SECURITY.md](SECURITY.md) to report security issues.
 Third-party software and services remain subject to their respective licenses and terms.
 

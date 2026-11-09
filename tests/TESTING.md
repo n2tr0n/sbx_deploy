@@ -45,8 +45,8 @@ inference, or MCP tools work in either harness.
 
 The installer records the model and MCP settings that it manages. It updates a
 setting only while its value matches the recorded value. It preserves later
-user edits and deletions. It stops if an existing setting has no ownership
-record, even if that setting matches a deployment default.
+user edits and deletions. It preserves matching unowned settings without
+claiming ownership. It stops before changing a different unowned setting.
 
 If deployment stops because ownership is unknown, keep the config, backups,
 and ownership records. Follow the recovery paths in the error message. Create

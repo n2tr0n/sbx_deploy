@@ -62,16 +62,6 @@ Local login helpers are explicit overrides. A successful Codex local login
 selects the built-in OpenAI provider. Host proxy substitution can still apply.
 Do not copy real tokens into the managed provider or placeholder files.
 
-Preservation fixture tests pass. On the clean host in `opencode-Paul`, both
-local device logins passed. The installer rerun completed with zero changed
-stages. OpenCode and Codex then replied to prompts without another login.
-Fresh-sandbox host model-access checks pass in both harnesses. These checks do
-not verify inference. OpenCode and Codex device logins returned HTTP 401 during
-sandbox tests. Codex also failed without the deployment login helper and after
-a daemon restart. Both device logins passed on a clean host with host OAuth
-not configured. The earlier 401 cause remains unknown. See `BACKLOG.md` for
-remaining checks.
-
 ### Context7 registration
 
 In **host PowerShell**, check `sbx mcp ls` and `sbx mcp inspect context7`.
