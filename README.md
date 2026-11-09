@@ -21,8 +21,8 @@ Check [known issues](BACKLOG.md) before deployment.
 1. Complete the [Windows host setup](HOST_SETUP_WIN.md). Use an `opencode` sandbox.
 2. Review [the installer](sbx_local_opencode_deploy.sh). To customize, fork the
    project on your host and ask your AI agent to adapt it. Review its changes.
-3. Paste the **entire file** into sandbox Bash as the default user with
-   passwordless sudo. Follow the prompts.
+3. Paste the **entire installer file contents** into sandbox's bash prompt as the default user with
+4. the default passwordless sudo. Follow the prompts.
 
 Licensed under [MIT-0](LICENSE).
 See [SECURITY.md](SECURITY.md) to report security issues.
