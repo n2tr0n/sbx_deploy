@@ -25,6 +25,7 @@
 #     Connect both harnesses to the shared host-managed MCP gateway.
 # 12. Check GitHub and shared OpenAI OAuth access. Report host recovery commands.
 #     Install check_credentials and check_mcp. Cache successes; SBX_CHECK_AUTH=1 checks again.
+#     Clear old successes before fresh checks.
 #     OpenAI checks model-list access only. No agent tasks start.
 # 13. Offer Ubuntu XFCE Webtop only if its container is absent. Preserve existing desktops.
 #     Install desktop to show status, URL, and host reconnection and port commands.
@@ -2741,6 +2742,10 @@ check_credential() {
         printf -v "${service}_auth_status" '%s' 'previously verified (cached)'
         stage_done unchanged 'Previously verified (cached)'
         return 0
+    fi
+    # Invalidate old success before a fresh probe, including failures or interruption.
+    if exists "$cache"; then
+        rm -f -- "$cache"
     fi
     code= status=0
     if [[ $service == github ]]; then
