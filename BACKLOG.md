@@ -3,7 +3,6 @@
 Check each report against current code before making changes. AI reports below
 are unverified. Record reproduction evidence. Update or close each entry after investigation.
 
-- [Fixed; sandbox validation pending] Auth cache: isolated probes reproduced stale success after a failed forced recheck. Clear the old cache before each fresh probe. Only HTTP 200 with exit status 0 writes a cache. Local checks cover cached reruns, failed rechecks, retries, changed inputs, missing host OAuth, and aborted probes. Confirm failed recheck followed by a normal rerun in the sandbox.
 - [AI-reported; unverified] Repeated OpenAI login: helpers may trust `SBX_CRED_OPENAI_MODE` instead of saved credentials. Check local-login and host-placeholder detection. Preserve explicit `--force` behavior.
 - [Code-reviewed; sandbox reproduction pending] Local OpenAI login selection: with host OAuth configured, installer reruns can reselect the managed OpenCode credential and Codex `sbx-chatgpt` provider after an explicit local login. The OpenCode import calls `auth switch` for an inactive matching managed record; the Codex configuration stage resets `model_provider`. Saved local tokens remain. Confirm in both harnesses. Preserve explicit local login selection on reruns.
 - [AI-reported; unverified] Shell startup hangs: check whether `flock 9` in `sbx-local-syslog` can wait indefinitely. Consider a time limit with a warning that lets shells continue. Include noninteractive agent shells.

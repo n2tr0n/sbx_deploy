@@ -15,7 +15,8 @@
 - Preserve complete-file paste execution in interactive Bash. Keep the outer wrapper and literal payload boundaries. Prompts must not read pending script text as input.
 - Assume passwordless sudo is available. Use noninteractive elevation so missing privileges cause an immediate failure.
 - Track reported issues in [BACKLOG.md](BACKLOG.md). Check each report against current code before changing behavior. Treat reported diagnoses as unverified.
-- Use ASD-STE100 principles where possible in documentation and comments. Use short sentences, direct instructions, and consistent terms. Preserve technical meaning. Prefer shorter text.
+- Keep `BACKLOG.md` for open work only. Remove resolved items when required checks pass, including sandbox checks confirmed by the user. Do not keep completed entries or ask again for confirmation already given.
+- Keep comments and documentation aligned with ASD-STE100 principles. Apply this rule when adding or updating text. Use short sentences, direct instructions, and consistent technical terms. Preserve technical meaning. Remove unnecessary words.
 
 ## Validation
 
