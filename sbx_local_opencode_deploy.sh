@@ -10,6 +10,7 @@
 # 4. Install missing Codex with download, install, and version time limits.
 #    Download missing TPM/tmux-resurrect atomically.
 # 5. Start rsyslog and log rotation on Bash startup, including after restarts.
+#    Limit the logging lock wait to five seconds. Warn and continue shell startup.
 # 6. Install tmux configuration; upgrade only unchanged deployment files.
 #    Preserve edits unless --tmux-redeploy is set. Load plugins and check bindings.
 #    Add the bundled resurrect snapshot only without user saves. Restore it manually.
@@ -105,6 +106,7 @@ sbx_save_and_run() {
 # Confirm the hostname after the banner; default No, require terminal input.
 # Show Codex download/install/version steps with time limits.
 # Start sandbox rsyslog/rotation on Bash startup, including after restarts.
+# Limit the logging lock wait to five seconds. Warn and continue shell startup.
 # Ask about Webtop only without its container; preserve existing desktop state/data.
 # Run desktop for boxed status, browser access and host reconnection commands.
 # Paste the ENTIRE file into Bash; rerun with: bash ~/sbx_local_opencode_deploy.sh
@@ -1170,7 +1172,16 @@ if [[ ${1-} == --rotate ]]; then
     done
 fi
 exec 9>>/run/sbx-local-syslog.lock
-flock 9
+# Shell startup catches failure and continues. Deployment must still stop on failure.
+if flock --wait 5 --conflict-exit-code 75 9; then
+    :
+else
+    lock_status=$?
+    if (( lock_status == 75 )); then
+        printf 'SBX logging: startup lock is busy after 5 seconds; logging setup skipped.\n' >&2
+    fi
+    exit "$lock_status"
+fi
 # Comparing with the daemon's PID file also recovers an interrupted install
 # that published the format but did not yet restart rsyslog.
 if [[ /etc/rsyslog.d/00-sbx-local-format.conf -nt /run/rsyslogd.pid ]] ||
