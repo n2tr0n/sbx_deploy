@@ -695,7 +695,7 @@ finish_installer() {
         summary_text 'Kit attachment restarts the sandbox.' "$muted"
         summary_text 'Attach before tunnel setup. See HOST_SETUP_WIN.md for checks.' "$muted"
         if (( EUID != 1000 )); then
-            summary_text "For this caller, add --kit-arg user=$EUID to the host command." "$amber"
+            summary_text "For this caller, add --kit-arg user=$(id -un) to the host command." "$amber"
         fi
         summary_text ''
         summary_text 'Connect from Windows VS Code:'

@@ -11,6 +11,8 @@ credentials out of logs and shared output.
   lifecycle configuration. Publish it, then check validation, inspection,
   attachment, and tunnel startup after a sandbox restart.
   Local SBX recognizes the v3 source, but offline validation has no kit builder.
+  The host then rejected numeric user argument expansion. The kit now defaults
+  to `agent` and accepts user names only. Check default and custom user startup.
 
 - [Unreproduced] Codex "broken pipe" during selection or copying. Investigate if
   it recurs. Record the steps, versions, and relevant output.

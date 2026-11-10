@@ -138,7 +138,11 @@ For a fixed kit version, replace
 Kit attachment recreates the sandbox container and interrupts sessions.
 Save open work first. Attach before tunnel setup. Rerun the installer if required.
 Run the installer and tunnel as `agent` (UID 1000). For another user, add
-`--kit-arg user=<user-or-uid>` to both kit commands. Use that user for setup.
+`--kit-arg user=<user-name>` to both kit commands. Use that user for setup.
+Use a user name, not a numeric UID. The kit defaults to `agent`. Numeric
+argument expansion can produce a number where the v3 lifecycle hook needs a
+string, even when the placeholder is quoted. If this error occurs, publish
+the updated kit and retry. Remove any numeric `--kit-arg user=...` override.
 If SBX rejects the kit, stop. Do not reset the sandbox. Check `sbx kit add --help`.
 
 The kit restarts an enabled tunnel when the sandbox starts. After a Windows
