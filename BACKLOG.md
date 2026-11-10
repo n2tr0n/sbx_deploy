@@ -10,3 +10,4 @@ credentials out of logs and shared output.
 
 - enable a module system
 - add RTK and Superpowers support
+- git username/email wizard
