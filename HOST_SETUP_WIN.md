@@ -170,6 +170,27 @@ Use `vscode_disable` to stop the tunnel and disable startup; allow up to 30 seco
 
 ### Tunnel troubleshooting
 
+If `sbx kit add` returns `409 Conflict` about an OAuth credential policy change,
+stop attachment attempts. Do not remove or reset the sandbox. This tunnel kit
+declares only a startup hook; it declares no credentials. The error concerns
+the effective kit composition. Its cause is not yet confirmed.
+
+Keep the existing sandbox and start the tunnel manually in **sandbox Bash**:
+
+```bash
+vscode_tunnel
+```
+
+```bash
+vscode_status
+```
+
+Without the startup kit, run `vscode_tunnel` again after a sandbox restart.
+No new sign-in is needed while the saved tunnel login remains valid.
+For investigation, record host `sbx version`, `sbx inspect <sandbox-name>`,
+and `sbx kit inspect` for the tunnel URL. Remove credentials before sharing
+output. Do not change OAuth bindings to bypass this error.
+
 If the sign-in page does not open, check `sbx settings get browser.enabled` in
 **host PowerShell**. To enable browser forwarding, run
 `sbx settings set browser.enabled true`. This changes a global SBX setting.

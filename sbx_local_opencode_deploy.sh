@@ -694,6 +694,8 @@ finish_installer() {
         summary_text 'Run from any host directory. Publish the kit to v0.5a before use.' "$muted"
         summary_text 'Kit attachment restarts the sandbox.' "$muted"
         summary_text 'Attach before tunnel setup. See HOST_SETUP_WIN.md for checks.' "$muted"
+        summary_text 'If attachment fails with OAuth policy conflict (409), keep the sandbox.' "$amber"
+        summary_text 'Run vscode_tunnel manually after each restart. See HOST_SETUP_WIN.md.' "$muted"
         if (( EUID != 1000 )); then
             summary_text "For this caller, add --kit-arg user=$(id -un) to the host command." "$amber"
         fi
