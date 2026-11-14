@@ -244,6 +244,34 @@ Keep the binding on loopback. Webtop has no login by default.
 
 ## Troubleshooting
 
+### Image change evidence
+
+After an image change, run the sandbox collector described in
+[SANDBOX_VALIDATION.md](SANDBOX_VALIDATION.md). Do not run the installer first
+in the disposable test sandbox. Keep the affected sandbox and saved logins.
+
+In **host PowerShell**, record the SBX version and sandbox name:
+
+```powershell
+sbx version
+```
+
+```powershell
+sbx ls
+```
+
+Then record the sandbox inspection. Replace `<sandbox-name>`:
+
+```powershell
+sbx inspect <sandbox-name>
+```
+
+Record the image reference, digest, and kit versions if shown. Inspection
+output can contain private settings. Remove credentials before sharing it.
+The sandbox collector cannot confirm host image identity or kit composition.
+
+### Connection checks
+
 Confirm the target with **host PowerShell** `sbx ls`.
 
 - GitHub: compare host `gh api user --jq .login` with

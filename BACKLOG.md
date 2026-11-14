@@ -3,10 +3,29 @@
 Check each report against current code before changing behavior. Keep real
 credentials out of logs and shared output.
 
+- [Reported image regression; pending sandbox checks] Collect requirements
+  with `sbx_sandbox_validate.sh` on the updated image. The report collects
+  paths, package versions, permissions, and credential-file metadata.
+  Optional probes check tool versions and network responses. Local checks
+  do not confirm sandbox compatibility. Record host image and kit details
+  using [SANDBOX_VALIDATION.md](SANDBOX_VALIDATION.md). Compare a fresh report
+  with a working sandbox before changing installer behavior. Confirm all
+  reported failures. Keep this item until collection and the required
+  deployment checks pass in user sandboxes.
+  The sandbox report confirms Debian 13, passwordless sudo, and no installed
+  Python 3. Node, npm, and Codex are absent from PATH. The installer already
+  installs Python 3 and standalone Codex. It has no Node or npm requirement.
+  Collect the remaining package, network, authentication, and MCP evidence.
+
 - [Confirmed compatibility gap] SBX v0.53.0 OpenCode sandbox uses Debian 13
   and OpenCode v2.3.0 at `/usr/local/bin/opencode`. The installer requires
   `/home/agent/.opencode/bin/opencode`, which is absent in the checked sandbox.
   The upgrade stage skips OpenCode. Login helpers also use the missing path.
+  The latest sandbox report confirms that `/usr/local/bin/opencode` is an
+  executable symlink owned by root. It points to `/opt/opencode/bin/opencode`.
+  User `agent` cannot write through it. The latest version check confirms
+  OpenCode v2.3.0. The target owner and supported upgrade method remain
+  unverified. Do not assume that the user-local curl updater can replace it.
   Check binary discovery and upgrade permissions before changing the installer.
   Host OAuth mode, the OAuth bridge file, and the MCP gateway URL still match
   installer assumptions. Check remaining failures against reported output.
