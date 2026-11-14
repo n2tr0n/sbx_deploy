@@ -92,20 +92,57 @@ No sandbox port mapping is required. VS Code AI extensions need separate setup.
 
 ### One-time startup registration
 
-In **host PowerShell**, from the SBX Deploy repository, check the sandbox's kit
-list with `sbx inspect <sandbox-name>`. Skip attachment if `sbx-vscode-tunnel`
-is already present. Inspect the kit, then attach it only if absent:
+In **host PowerShell**, from any directory, check the sandbox's kit
+list with `sbx inspect <sandbox-name>`. Skip attachment if this tunnel kit
+is already present. The Git URL removes the need for a local repository copy.
+Push `kits/vscode-tunnel/spec.yaml` to the `v0.5a` branch before use.
+The kit uses v3 to match current OpenCode sandboxes. SBX cannot mix v3 kits
+with v1/v2 kits. If this error occurs, publish the updated v3 kit before retrying.
+Older v1/v2 sandboxes need a matching older kit. Do not reset an existing sandbox.
+
+Check the host kit source allowlist:
 
 ```powershell
-sbx kit validate ./kits/vscode-tunnel --offline
-sbx kit inspect ./kits/vscode-tunnel --offline
-sbx kit add <sandbox-name> ./kits/vscode-tunnel
+sbx settings get kit.allowedSources
 ```
+
+If `github.com/n2tr0n/` is absent and administrator policy permits it, add
+that publisher. The setting replaces the full list. Preserve all existing
+entries. For the reported list `["docker.io/","dhi.io/"]`, use:
+
+```powershell
+sbx --% settings set kit.allowedSources "[\"docker.io/\",\"dhi.io/\",\"github.com/n2tr0n/\"]"
+```
+
+`--%` preserves the JSON argument in Windows PowerShell. This host setting
+applies across local sandboxes. Skip the change if the publisher is allowed.
+If administrator policy rejects the change, ask the administrator to add it.
+See [Docker kit source settings](https://docs.docker.com/ai/sandboxes/configuration/settings/#kitallowedsources).
+
+Inspect the kit, then attach it only if absent:
+
+```powershell
+sbx kit inspect "git+https://github.com/n2tr0n/sbx_deploy.git#ref=v0.5a&dir=kits/vscode-tunnel"
+sbx kit add <sandbox-name> "git+https://github.com/n2tr0n/sbx_deploy.git#ref=v0.5a&dir=kits/vscode-tunnel"
+```
+
+Copy commands as plain text. Do not include Markdown link syntax such as
+`[URL](URL)` or bold markers. Keep the URL in quotes because it contains `&`.
+Remote checks need network
+access and do not support `--offline`. The offline validator cannot build this
+v3 source kit. If SBX reports that no kit builder is configured, stop and keep
+the sandbox. Record `sbx version` and the error before further changes.
+For a fixed kit version, replace
+`ref=v0.5a` with `ref=<commit-sha>`. The branch URL follows published changes.
 
 Kit attachment recreates the sandbox container and interrupts sessions.
 Save open work first. Attach before tunnel setup. Rerun the installer if required.
 Run the installer and tunnel as `agent` (UID 1000). For another user, add
-`--kit-arg user=<user-or-uid>` to all three kit commands. Use that user for setup.
+`--kit-arg user=<user-name>` to both kit commands. Use that user for setup.
+Use a user name, not a numeric UID. The kit defaults to `agent`. Numeric
+argument expansion can produce a number where the v3 lifecycle hook needs a
+string, even when the placeholder is quoted. If this error occurs, publish
+the updated kit and retry. Remove any numeric `--kit-arg user=...` override.
 If SBX rejects the kit, stop. Do not reset the sandbox. Check `sbx kit add --help`.
 
 The kit restarts an enabled tunnel when the sandbox starts. After a Windows
@@ -133,6 +170,27 @@ Use `vscode_disable` to stop the tunnel and disable startup; allow up to 30 seco
 
 ### Tunnel troubleshooting
 
+If `sbx kit add` returns `409 Conflict` about an OAuth credential policy change,
+stop attachment attempts. Do not remove or reset the sandbox. This tunnel kit
+declares only a startup hook; it declares no credentials. The error concerns
+the effective kit composition. Its cause is not yet confirmed.
+
+Keep the existing sandbox and start the tunnel manually in **sandbox Bash**:
+
+```bash
+vscode_tunnel
+```
+
+```bash
+vscode_status
+```
+
+Without the startup kit, run `vscode_tunnel` again after a sandbox restart.
+No new sign-in is needed while the saved tunnel login remains valid.
+For investigation, record host `sbx version`, `sbx inspect <sandbox-name>`,
+and `sbx kit inspect` for the tunnel URL. Remove credentials before sharing
+output. Do not change OAuth bindings to bypass this error.
+
 If the sign-in page does not open, check `sbx settings get browser.enabled` in
 **host PowerShell**. To enable browser forwarding, run
 `sbx settings set browser.enabled true`. This changes a global SBX setting.
@@ -151,7 +209,7 @@ sign-in endpoints and the Azure tunnel endpoints listed in
 Do not add token bindings for Azure tunnel domains. Use the tunnel's sign-in flow.
 
 [VS Code Remote Tunnels guide](https://code.visualstudio.com/docs/remote/tunnels),
-[Docker startup kit reference](https://docs.docker.com/ai/sandboxes/customize/kits-v2/#startup)
+[Docker lifecycle reference](https://docs.docker.com/ai/sandboxes/customize/author/#choose-when-setup-runs)
 
 ## Optional Webtop desktop
 

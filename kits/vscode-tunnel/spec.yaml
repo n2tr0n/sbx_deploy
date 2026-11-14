@@ -1,21 +1,24 @@
-schemaVersion: "2"
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
 kind: mixin
-name: sbx-vscode-tunnel
+displayName: SBX VS Code tunnel
 description: Start the enabled SBX Deploy VS Code tunnel on each sandbox start.
 args:
   user:
-    default: "1000"
-    description: Sandbox user who runs the installer and tunnel setup.
-    pattern: '^[a-zA-Z0-9_-]+$'
-setup:
-  startup:
-    - command:
-        - /usr/bin/env
-        - -u
-        - BASH_ENV
-        - /bin/bash
-        - -c
-        - 'if [ -x "$HOME/.local/bin/sbx_vscode" ]; then exec "$HOME/.local/bin/sbx_vscode" --run; fi'
-      user: "${{ kit.args.user }}"
-      background: true
-      description: Run the tunnel only after the user enables it.
+    default: "agent"
+    description: Sandbox user name for the installer and tunnel setup. Numeric UIDs are not supported.
+    pattern: '^[a-zA-Z_][a-zA-Z0-9_-]*$'
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      startup:
+        - command:
+            - /usr/bin/env
+            - -u
+            - BASH_ENV
+            - /bin/bash
+            - -c
+            - 'if [ -x "$HOME/.local/bin/sbx_vscode" ]; then exec "$HOME/.local/bin/sbx_vscode" --run; fi'
+          user: "${{ kit.args.user }}"
+          background: true
+          description: Run the tunnel only after the user enables it.
