@@ -16,13 +16,19 @@ python3 -m unittest discover -s tests -v
 
 On Windows, use `python` instead of `python3`.
 
-The tests need the installer and both `.py` files in this layout:
+The tests need both scripts and the `.py` files in this layout:
 
 ```text
 sbx_local_opencode_deploy.sh
+sbx_sandbox_validate.sh
 tests/
   test_auth_preservation.py
   test_config_ownership.py
+  test_download_errors.py
+  test_opencode_discovery.py
+  test_package_timezone.py
+  test_sandbox_validator.py
+  test_shell_startup.py
 ```
 
 Use a mounted repository or copy these files together. Pasting the installer
@@ -33,6 +39,19 @@ does not copy the tests into the sandbox.
 - `test_auth_preservation.py` checks saved authentication choices and reruns.
 - `test_config_ownership.py` checks fresh configs, custom settings, MCP headers,
   other MCP servers, unchanged reruns, and interrupted config updates.
+- `test_download_errors.py` checks local and cloud recovery commands, known
+  redirect hosts, unrelated failures, concise output, narrow terminals, cleanup,
+  and preserved exit codes. It uses synthetic logs and runs no host commands.
+- `test_opencode_discovery.py` checks PATH selection, the user-local fallback,
+  preservation of other installations, upgrade caching, and failure status.
+- `test_package_timezone.py` checks new timezone answers, existing timezone
+  preservation, APT input and progress, failure status, and unchanged reruns.
+- `test_sandbox_validator.py` checks report privacy, requirement lists, and
+  probe cleanup. Its paste checks use Windows Git Bash and skip if absent.
+- `test_shell_startup.py` checks DHI startup order, login and non-login shells,
+  user aliases and hooks, startup migration, and unchanged reruns. It also
+  checks first-paste activation, failure status, child-shell behavior, and
+  matching saved-installer refresh code.
 
 The tests read code from the installer and use temporary files. They do not run
 the full installer, make network requests, or change live configs or logins.
