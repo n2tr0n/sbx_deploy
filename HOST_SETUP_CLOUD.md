@@ -4,7 +4,7 @@ For cloud SBX sandboxes of type `opencode`. Cloud runtime validation is pending.
 Use a disposable sandbox first. Run host commands in **Windows PowerShell**
 and deployment commands in **sandbox Bash**. Skip completed setup.
 
-## 1. Find the sandbox
+## 1. Allow required downloads
 
 In **Windows PowerShell**:
 
@@ -18,7 +18,25 @@ Record the SBX version, image, and expiration time. Allow enough time for
 deployment and validation. Collect a report with
 [SANDBOX_VALIDATION.md](SANDBOX_VALIDATION.md) before deployment.
 
-## Check cloud credentials
+In **Windows PowerShell**, inspect account and sandbox rules:
+
+```powershell
+sbx --cloud policy ls
+```
+
+```powershell
+sbx --cloud policy ls <sandbox-id>
+```
+
+Skip this step if all four hosts are already allowed. Keep intentional denies.
+For missing Codex or VS Code download access, add a sandbox-scoped rule in
+**Windows PowerShell**:
+
+```powershell
+sbx --cloud policy allow network "chatgpt.com:443,releases.openai.com:443,update.code.visualstudio.com:443,vscode.download.prss.microsoft.com:443" --sandbox <sandbox-id>
+```
+
+## 2. Check cloud credentials
 
 Cloud secrets are separate from local secrets and Docker Agentic Platform
 secrets. Local Windows bindings do not configure cloud credentials.
@@ -55,7 +73,7 @@ not import the local Docker OpenCode OAuth bridge. It uses the shared Codex
 OAuth provider only when `SBX_CRED_OPENAI_MODE=oauth` is advertised. The cloud
 placeholder contract still needs sandbox validation.
 
-## Connect MCP
+## 3. Connect MCP
 
 Connect Context7 through Docker Agentic Platform with the same Docker account.
 Cloud sandboxes do not use registrations from local `sbx mcp add`.
@@ -93,28 +111,6 @@ Both harnesses use this endpoint. Existing MCP headers and user overrides stay.
 Do not put an access token in the URL. No cloud endpoint is verified by this
 repository yet. Existing headers stay in their original harness. If cloud
 MCP requires authentication, its equivalent Codex setup still needs validation.
-
-## 2. Check network rules
-
-In **Windows PowerShell**, inspect account and sandbox rules:
-
-```powershell
-sbx --cloud policy ls
-```
-
-```powershell
-sbx --cloud policy ls <sandbox-id>
-```
-
-## 3. Allow required downloads
-
-Skip this step if all four hosts are already allowed. Keep intentional denies.
-For missing Codex or VS Code download access, add a sandbox-scoped rule in
-**Windows PowerShell**:
-
-```powershell
-sbx --cloud policy allow network "chatgpt.com:443,releases.openai.com:443,update.code.visualstudio.com:443,vscode.download.prss.microsoft.com:443" --sandbox <sandbox-id>
-```
 
 ## 4. Deploy and check
 
