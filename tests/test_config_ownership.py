@@ -101,6 +101,17 @@ class ConfigOwnership(unittest.TestCase):
     def test_opencode_lifecycle(self):
         self.check_lifecycle('opencode')
 
+    def test_missing_gateway_does_not_create_or_replace_mcp_settings(self):
+        source, _ = self.run_config('opencode', gateway='')
+        self.assertNotIn('mcp', self.read('opencode', source))
+        data = self.read('opencode', source)
+        data['mcp'] = {'custom': {'type': 'remote', 'url': 'https://custom.example/mcp'},
+                       'mcp-gateway': {'type': 'local', 'command': ['custom-gateway']}}
+        self.write('opencode', source, data)
+        before = source.read_bytes()
+        self.assertFalse(self.run_config('opencode', gateway='')[1])
+        self.assertEqual(source.read_bytes(), before)
+
     @unittest.skipIf(tomlkit is None, 'TOMLKit is required for real Codex config checks')
     def test_codex_lifecycle(self):
         self.check_lifecycle('codex')

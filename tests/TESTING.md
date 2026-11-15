@@ -41,7 +41,10 @@ does not copy the tests into the sandbox.
 
 - `test_environment_profiles.py` checks explicit and automatic selection,
   unknown environments, cloud URL privacy, saved profile ownership, moved
-  sandboxes, and wrapper and payload syntax. It runs no deployment operations.
+  sandboxes, terminal selection input and cancellation, and wrapper and payload
+  syntax. It checks the logo before the environment card, confirmation defaults,
+  manual selection, and narrow terminals. It also checks cloud MCP discovery, JSONC precedence, URL privacy,
+  and pending setup without an endpoint. It runs no deployment operations.
 - `test_cloud_credentials.py` checks cloud startup OAuth, environment API keys,
   custom providers, private diagnostics, and cloud recovery instructions.
 - `test_auth_preservation.py` checks saved authentication choices and reruns.

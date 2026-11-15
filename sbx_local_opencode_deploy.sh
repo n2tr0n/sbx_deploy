@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Target: local and cloud Docker Sandboxes (sbx) of type opencode.
 # One editable file. Keep shared setup and environment profiles together.
-# Select local or cloud at the first prompt, or set SBX_ENV. Reruns reuse the profile.
-# Cloud MCP needs MCP_GATEWAY_URL or SBX_MCP_GATEWAY_URL on the first run.
+# After the logo, confirm local or cloud. Press Enter to keep the detected default.
+# Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
@@ -24,7 +24,7 @@ if [[ ${BASH_SOURCE[0]:-} == "$0" || ( -z ${BASH_SOURCE[0]:-} && $- != *i* ) ]];
 fi
 sbx_save_and_run() {
     local payload target="$HOME/sbx_local_opencode_deploy.sh" staged= backup= candidate compare_status mode original= was_present=false
-    local tmux_redeploy=false option
+    local tmux_redeploy=false option log_file=
     if "$sbx_child_shell"; then
         for option in "${sbx_script_args[@]}"; do
             case $option in
@@ -49,25 +49,90 @@ sbx_save_and_run() {
         sbx_webtop_supported=false
         mcp_gateway_url=${SBX_MCP_GATEWAY_URL:-${MCP_GATEWAY_URL:-}}
     }
+    sbx_discover_gateway() {
+        # Read configuration only. Never read auth files or print parser diagnostics.
+        command -v python3 >/dev/null 2>&1 || return 0
+        python3 - <<'SBX_DISCOVER_GATEWAY'
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+def endpoint(record):
+    if not isinstance(record, dict) or 'command' in record:
+        return ''
+    value = record.get('url', '')
+    if not isinstance(value, str) or (value and not re.fullmatch(
+            r'https?://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[a-zA-Z0-9._~/-]*)?', value)):
+        raise ValueError()
+    return value
+
+try:
+    directory = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'opencode'
+    source = directory / 'opencode.jsonc'
+    if not source.exists() and not source.is_symlink():
+        source = directory / 'opencode.json'
+    if source.exists() or source.is_symlink():
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 4194304:
+            raise ValueError()
+        text = source.read_text(encoding='utf-8')
+        tokens = r'"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/'
+        clean = re.sub(tokens, lambda match: match[0] if match[0].startswith('"') else
+                       re.sub(r'[^\r\n]', ' ', match[0]), text)
+        clean = re.sub(r'"(?:\\.|[^"\\])*"|,(\s*[}\]])',
+                       lambda match: ' ' + match[1] if match[1] is not None else match[0], clean)
+        config = json.loads(clean, object_pairs_hook=unique)
+        gateway = config.get('mcp', {}).get('mcp-gateway', {})
+        if isinstance(gateway, dict) and gateway.get('type', 'remote') == 'remote':
+            value = endpoint(gateway)
+            if value:
+                print(value)
+                sys.exit(0)
+    source = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
+    if source.exists() or source.is_symlink():
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 4194304:
+            raise ValueError()
+        try:
+            import tomllib
+            config = tomllib.loads(source.read_text(encoding='utf-8'))
+        except ImportError:
+            import tomlkit
+            config = tomlkit.parse(source.read_text(encoding='utf-8'))
+        value = endpoint(config.get('mcp_servers', {}).get('mcp-gateway', {}))
+        if value:
+            print(value)
+except Exception:
+    sys.exit(2)  # Keep configuration text and credentials out of diagnostics.
+SBX_DISCOVER_GATEWAY
+    }
     sbx_read_environment() {
         local input_fd=$1 suggested=$2 answer=
         while :; do
-            printf 'Sandbox environment [local/cloud]%s: ' "${suggested:+ (Enter for $suggested)}" >&2
+            printf '  %sEnvironment%s [%s]: ' "${green-}" "${reset-}" "${suggested:-local/cloud}" >&3
             if ! IFS= read -r -u "$input_fd" answer; then
-                printf '\nSBX Deploy: environment selection cancelled.\n' >&2
+                printf '\n  Environment selection cancelled.\n' >&3
                 return 130
             fi
             answer=${answer:-$suggested}
             case $answer in
                 local|cloud) sbx_environment=$answer; return 0 ;;
-                *) printf 'Enter local or cloud.\n' >&2 ;;
+                *) printf '  Enter local or cloud.\n' >&3 ;;
             esac
         done
     }
     sbx_select_environment() {
         local requested=${SBX_ENV:-auto} cached_environment= cached_host= cached_gateway= version= extra= key= baseline= profile_unrecorded=false
         sbx_profile_file="${XDG_STATE_HOME:-$HOME/.local/state}/sbx-deploy/environment"
-        sbx_environment= sbx_sandbox_target=
+        sbx_environment= sbx_sandbox_target= sbx_environment_source=detected
         case $requested in
             auto|local|cloud) ;;
             *) printf 'SBX Deploy: SBX_ENV must be auto, local, or cloud.\n' >&2; return 2 ;;
@@ -104,30 +169,50 @@ sbx_save_and_run() {
         fi
         if [[ $requested != auto ]]; then
             sbx_environment=$requested
+            sbx_environment_source=SBX_ENV
         elif [[ -n $cached_environment && $cached_host == "${HOSTNAME:-}" && -n $cached_host ]]; then
-            # A previous explicit selection is valid only for the same sandbox host.
+            # Use the saved default only for the same sandbox host.
             sbx_environment=$cached_environment
-        elif [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ && ${SBX_SANDBOX_NAME:-} == "sbx_${HOSTNAME#sbx-}" ]]; then
-            # Require the matching cloud ID as well as the hostname pattern.
+            sbx_environment_source=saved
+        elif [[ ! ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ && -n ${SANDBOX_ID:-} && -n ${SANDBOX_NAME:-} &&
+                -n ${SANDBOX_VM_ID:-} && -n ${SBX_AGENT:-} ]]; then
+            # Local report: three sandbox variables and the agent are present.
+            sbx_environment=local
+        elif [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ &&
+                -z ${SANDBOX_ID+x} && -z ${SANDBOX_NAME+x} && -z ${SANDBOX_VM_ID+x} && -z ${SBX_AGENT+x} &&
+                -z ${SBX_CRED_OPENAI_MODE+x} && -z ${SBX_CRED_GITHUB_MODE+x} &&
+                ( -z ${SBX_SANDBOX_NAME:-} || ${SBX_SANDBOX_NAME:-} == "sbx_${HOSTNAME#sbx-}" ) ]]; then
+            # Cloud report: generated hostname, with no local IDs or mode markers.
             sbx_environment=cloud
         else
-            local environment_fd= suggested_environment= environment_status=0
-            # A hostname is a hint. The caller confirms the first selection.
-            if [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ ]]; then suggested_environment=cloud; fi
-            # Descriptor 6 is the caller input. Never read the literal payload.
-            if [[ -t 6 ]]; then
-                environment_fd=6
-            elif { exec 7</dev/tty; } 2>/dev/null; then
-                environment_fd=7
-            fi
-            if [[ -z $environment_fd ]]; then
-                printf 'SBX Deploy: cannot select the environment without a terminal. Export SBX_ENV=local or SBX_ENV=cloud, then paste again. See HOST_SETUP_WIN.md or HOST_SETUP_CLOUD.md.\n' >&2
-                return 2
-            fi
-            sbx_read_environment "$environment_fd" "$suggested_environment" || environment_status=$?
-            [[ $environment_fd != 7 ]] || exec 7<&-
-            (( environment_status == 0 )) || return "$environment_status"
+            sbx_environment=
         fi
+        local environment_fd=${1-} environment_status=0
+        # Descriptor 6 is the caller input. Never read the literal payload.
+        if [[ -n $environment_fd ]]; then
+            : # An internal caller can supply an input descriptor.
+        elif [[ -t 6 ]]; then
+            environment_fd=6
+        elif { exec 7</dev/tty; } 2>/dev/null; then
+            environment_fd=7
+        fi
+        summary_begin 'SANDBOX ENVIRONMENT' "$green"
+        if [[ -n $sbx_environment ]]; then
+            summary_text "Default: $sbx_environment ($sbx_environment_source)"
+            summary_text 'Press Enter to keep it, or type local or cloud.' "$muted"
+        else
+            summary_text 'Environment markers are unknown or conflict.' "$amber"
+            summary_text 'Type local or cloud to continue.' "$muted"
+        fi
+        summary_end
+        if [[ -z $environment_fd ]]; then
+            printf 'No terminal input; deployment cancelled.\n' >&3
+            return 130
+        fi
+        sbx_read_environment "$environment_fd" "$sbx_environment" || environment_status=$?
+        [[ $environment_fd != 7 ]] || exec 7<&-
+        (( environment_status == 0 )) || return "$environment_status"
+        printf '\n' >&3
         case ${SBX_NETWORK_SCOPE:-auto} in
             auto) ;;
             "$sbx_environment") ;;
@@ -137,9 +222,15 @@ sbx_save_and_run() {
         if [[ -z ${SBX_MCP_GATEWAY_URL:-${MCP_GATEWAY_URL:-}} && $cached_environment == "$sbx_environment" && $cached_host == "${HOSTNAME:-}" ]]; then
             mcp_gateway_url=$cached_gateway
         fi
+        if [[ $sbx_environment == cloud && -z $mcp_gateway_url ]]; then
+            if ! mcp_gateway_url=$(sbx_discover_gateway); then
+                printf 'SBX Deploy: cannot read the existing MCP gateway configuration safely. Preserve the configs and review mcp-gateway in OpenCode and Codex. Do not share credentials. See HOST_SETUP_CLOUD.md.\n' >&2
+                return 2
+            fi
+        fi
         # Accept only URLs without user information, query strings, or fragments.
         # Real credentials must not enter generated helpers, logs, or backups.
-        if [[ ! $mcp_gateway_url =~ ^https?://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[a-zA-Z0-9._~/-]*)?$ ]]; then
+        if [[ -n $mcp_gateway_url || $sbx_environment != cloud ]] && [[ ! $mcp_gateway_url =~ ^https?://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[a-zA-Z0-9._~/-]*)?$ ]]; then
             printf 'SBX Deploy: set SBX_MCP_GATEWAY_URL to the sandbox MCP HTTP(S) endpoint. Omit credentials, query strings, and fragments. See %s.\n' "$sbx_host_doc" >&2
             return 2
         fi
@@ -155,6 +246,157 @@ sbx_save_and_run() {
         fi
         if [[ ! $sbx_sandbox_target =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then sbx_sandbox_target='$sandboxName'; fi
     }
+# Prepare terminal output before any environment questions.
+# Keep terminal presentation independent from captured command output.
+exec 3>&1 4>&2
+verbose=${SBX_VERBOSE:-0}
+animated=false
+green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_dark_green= banner_grey=
+utf8=false
+spinner_frames=('|' '/' '-' '\')
+locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
+if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then
+    utf8=true
+    spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+fi
+if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
+    [[ $verbose == 1 ]] || animated=true
+    if [[ -z ${NO_COLOR+x} ]]; then
+        green=$'\033[32m' amber=$'\033[33m' red=$'\033[31m'
+        muted=$'\033[90m' reset=$'\033[0m'
+        bold_amber=$'\033[1;93m' bold_red=$'\033[1;91m'
+        banner_grey=$'\033[38;5;245m'
+        banner_white=$'\033[1;37m'
+        banner_bright_green=$'\033[1;92m'
+        banner_dark_green=$'\033[38;5;22m'
+    fi
+fi
+
+# Write plain text to the private log. Apply styling only to terminal output.
+report_line() {
+    printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3
+    if [[ -n ${log_file-} ]]; then printf '%s\n' "$1" >> "$log_file"; fi
+}
+summary_layout() {
+    summary_width=${COLUMNS:-}
+    if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
+        summary_width=$(tput cols 2>/dev/null) || summary_width=80
+    fi
+    [[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
+    summary_width=$((10#$summary_width))
+    (( summary_width > 0 )) || summary_width=80
+    (( summary_width <= 80 )) || summary_width=80
+    box_open=false
+    box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
+    command_bullet='-'
+    if "$utf8"; then
+        box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
+        command_bullet='•'
+    fi
+}
+summary_layout
+box_rule() {
+    local rule
+    printf -v rule '%*s' "$((summary_width - 2))" ''
+    rule=${rule// /$box_horizontal}
+    report_line "$1$rule$2" "$muted"
+}
+summary_begin() {
+    report_line ''
+    box_open=false
+    if (( summary_width >= 60 )); then
+        box_rule "$box_tl" "$box_tr"
+        box_open=true
+    fi
+    summary_text "$1" "${2:-$muted}"
+}
+summary_end() {
+    if "$box_open"; then box_rule "$box_bl" "$box_br"; fi
+    box_open=false
+}
+summary_text() {
+    local text=$1 color=${2-} kind=${3:-prose} width=$((summary_width - 4)) word line='' padding
+    # Commands, paths and diagnostic excerpts must remain intact and copyable.
+    if [[ $kind == literal ]]; then
+        if "$box_open" && (( ${#text} <= width )); then
+            printf -v padding '%*s' "$((width - ${#text}))" ''
+            printf '%s%s%s %s%s%s%s %s%s%s\n' "$muted" "$box_vertical" "$reset" "$color" "$text" "$reset" "$padding" "$muted" "$box_vertical" "$reset" >&3
+            if [[ -n ${log_file-} ]]; then printf '%s\n' "$text" >> "$log_file"; fi
+        else
+            report_line "  $text" "$color"
+        fi
+        return
+    fi
+    # Split prose on spaces using read, never pathname expansion.
+    local -a words=()
+    read -r -a words <<< "$text"
+    for word in "${words[@]}"; do
+        if [[ -n $line ]] && (( ${#line} + ${#word} + 1 > width )); then
+            summary_text "$line" "$color" literal
+            line=''
+        fi
+        line+="${line:+ }$word"
+    done
+    summary_text "$line" "$color" literal
+}
+summary_command() {
+    local command="$command_bullet $1" description=${2-}
+    if [[ -z $description ]]; then
+        summary_text "$command" '' literal
+    elif (( ${#command} + ${#description} + 4 <= summary_width - 4 )); then
+        summary_text "$command    $description" '' literal
+    else
+        summary_text "$command" '' literal
+        summary_text "$description" "$muted"
+    fi
+}
+
+# FIGlet Slant by Glenn Chappell, pre-rendered at full width.
+banner_line=0
+while IFS= read -r line; do
+    case $banner_line in
+        2)
+            label='N i T R O N   P R E S E N T S'
+            line=${line/"$label"/"$banner_bright_green$label$banner_grey"}
+            ;;
+        7)
+            # Non-UTF-8 locales can count em dashes as bytes.
+            # Use the X to locate the color boundary without splitting this row.
+            logo_tail='  /  \  \'
+            line="${line:0:6}$green${line:6}"
+            line=${line/"$logo_tail"/"$logo_tail$banner_grey"}
+            ;;
+        4|5|6|8)
+            line="${line:0:6}$green${line:6:31}$banner_grey${line:37}"
+            if (( banner_line == 6 )); then
+                label='.:: S B X   D E P L O Y ::.'
+                accent="$green.:: $banner_white"'S B X   D E P L O Y'"$green ::.$banner_grey"
+                line=${line/"$label"/"$accent"}
+            fi
+            ;;
+        9)
+            label="Nitron's Deployment Script for SBX v0.4a"
+            line=${line/"$label"/"$banner_dark_green$label$banner_grey"}
+            ;;
+    esac
+    printf '%s%s%s\n' "$banner_grey" "$line" "$reset" >&3
+    banner_line=$((banner_line + 1))
+done <<'SBX_BANNER'
+
+  .-----------------------------------------------------------------------.
+ /__________  N i T R O N   P R E S E N T S  ______________________________\
+ \_  _                                                                 _  _/
+   \/     _______   _______ ___   ___                                   \/
+   /\    /  _____/ /  __   \\  \ /  /                                   /\
+  /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
+  \  /  —————/  //  /_/   /  /  \  \                                   \  /
+   \/  /_______//________/__/__/_\__\_________________________________  \/
+   /\  \__  Nitron's Deployment Script for SBX v0.6a               __/  /\
+ _/  \____\_______________________________________________________/____/  \_
+ \_________________________________________________________________________/
+
+SBX_BANNER
+
     sbx_select_environment
     command -v flock >/dev/null 2>&1 || {
         printf 'SBX Deploy: flock is required (install util-linux first).\n' >&2
@@ -193,8 +435,8 @@ sbx_save_and_run() {
 #!/usr/bin/env bash
 # Target: local and cloud Docker Sandboxes (sbx) of type opencode.
 # One editable file. Keep shared setup and environment profiles together.
-# Select local or cloud at the first prompt, or set SBX_ENV. Reruns reuse the profile.
-# Cloud MCP needs MCP_GATEWAY_URL or SBX_MCP_GATEWAY_URL on the first run.
+# After the logo, confirm local or cloud. Press Enter to keep the detected default.
+# Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
@@ -314,76 +556,6 @@ version_seconds=15
 kill_seconds=5
 package_timezone=${SBX_TIMEZONE:-America/Toronto}
 
-# Keep terminal presentation independent from captured command output.
-exec 3>&1 4>&2
-verbose=${SBX_VERBOSE:-0}
-animated=false
-green= amber= red= muted= reset= bold_amber= bold_red= banner_white= banner_bright_green= banner_dark_green= banner_grey=
-utf8=false
-spinner_frames=('|' '/' '-' '\')
-locale_name=${LC_ALL:-${LC_CTYPE:-${LANG:-}}}
-if [[ ${locale_name,,} == *utf-8* || ${locale_name,,} == *utf8* ]]; then
-    utf8=true
-    spinner_frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-fi
-if [[ -t 3 && ${TERM:-dumb} != dumb ]]; then
-    [[ $verbose == 1 ]] || animated=true
-    if [[ -z ${NO_COLOR+x} ]]; then
-        green=$'\033[32m' amber=$'\033[33m' red=$'\033[31m'
-        muted=$'\033[90m' reset=$'\033[0m'
-        bold_amber=$'\033[1;93m' bold_red=$'\033[1;91m'
-        banner_grey=$'\033[38;5;245m'
-        banner_white=$'\033[1;37m'
-        banner_bright_green=$'\033[1;92m'
-        banner_dark_green=$'\033[38;5;22m'
-    fi
-fi
-
-# FIGlet Slant by Glenn Chappell, pre-rendered at full width.
-banner_line=0
-while IFS= read -r line; do
-    case $banner_line in
-        2)
-            label='N i T R O N   P R E S E N T S'
-            line=${line/"$label"/"$banner_bright_green$label$banner_grey"}
-            ;;
-        7)
-            # Non-UTF-8 locales can count em dashes as bytes.
-            # Use the X to locate the color boundary without splitting this row.
-            logo_tail='  /  \  \'
-            line="${line:0:6}$green${line:6}"
-            line=${line/"$logo_tail"/"$logo_tail$banner_grey"}
-            ;;
-        4|5|6|8)
-            line="${line:0:6}$green${line:6:31}$banner_grey${line:37}"
-            if (( banner_line == 6 )); then
-                label='.:: S B X   D E P L O Y ::.'
-                accent="$green.:: $banner_white"'S B X   D E P L O Y'"$green ::.$banner_grey"
-                line=${line/"$label"/"$accent"}
-            fi
-            ;;
-        9)
-            label="Nitron's Deployment Script for SBX v0.4a"
-            line=${line/"$label"/"$banner_dark_green$label$banner_grey"}
-            ;;
-    esac
-    printf '%s%s%s\n' "$banner_grey" "$line" "$reset" >&3
-    banner_line=$((banner_line + 1))
-done <<'SBX_BANNER'
-
-  .-----------------------------------------------------------------------.
- /__________  N i T R O N   P R E S E N T S  ______________________________\
- \_  _                                                                 _  _/
-   \/     _______   _______ ___   ___                                   \/
-   /\    /  _____/ /  __   \\  \ /  /                                   /\
-  /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
-  \  /  —————/  //  /_/   /  /  \  \           Opencode/Local          \  /
-   \/  /_______//________/__/__/_\__\_________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX v0.6a               __/  /\
- _/  \____\_______________________________________________________/____/  \_
- \_________________________________________________________________________/
-
-SBX_BANNER
 
 # Read from the terminal, never from a pasted payload or piped shell commands.
 # Save before confirmation. A refusal skips deployment and returns 130.
@@ -465,85 +637,6 @@ record_issue() {
     issue_details+=("$detail") issue_actions+=("$actions")
     warning_count=${#issue_keys[@]}
     printf 'Warning: %s - %s\n%s\n' "$title" "$detail" "$actions" >> "$log_file"
-}
-
-# Write plain text to the private log. Apply styling only to terminal output.
-report_line() {
-    printf '%s%s%s\n' "${2-}" "$1" "$reset" >&3
-    printf '%s\n' "$1" >> "$log_file"
-}
-summary_layout() {
-    summary_width=${COLUMNS:-}
-    if [[ -t 3 && ${TERM:-dumb} != dumb && ! $summary_width =~ ^[0-9]+$ ]]; then
-        summary_width=$(tput cols 2>/dev/null) || summary_width=80
-    fi
-    [[ $summary_width =~ ^[0-9]{1,3}$ ]] || summary_width=80
-    summary_width=$((10#$summary_width))
-    (( summary_width > 0 )) || summary_width=80
-    (( summary_width <= 80 )) || summary_width=80
-    box_open=false
-    box_vertical='|' box_horizontal='-' box_tl='+' box_tr='+' box_bl='+' box_br='+'
-    command_bullet='-'
-    if "$utf8"; then
-        box_vertical='│' box_horizontal='─' box_tl='┌' box_tr='┐' box_bl='└' box_br='┘'
-        command_bullet='•'
-    fi
-}
-summary_layout
-box_rule() {
-    local rule
-    printf -v rule '%*s' "$((summary_width - 2))" ''
-    rule=${rule// /$box_horizontal}
-    report_line "$1$rule$2" "$muted"
-}
-summary_begin() {
-    report_line ''
-    box_open=false
-    if (( summary_width >= 60 )); then
-        box_rule "$box_tl" "$box_tr"
-        box_open=true
-    fi
-    summary_text "$1" "${2:-$muted}"
-}
-summary_end() {
-    if "$box_open"; then box_rule "$box_bl" "$box_br"; fi
-    box_open=false
-}
-summary_text() {
-    local text=$1 color=${2-} kind=${3:-prose} width=$((summary_width - 4)) word line='' padding
-    # Commands, paths and diagnostic excerpts must remain intact and copyable.
-    if [[ $kind == literal ]]; then
-        if "$box_open" && (( ${#text} <= width )); then
-            printf -v padding '%*s' "$((width - ${#text}))" ''
-            printf '%s%s%s %s%s%s%s %s%s%s\n' "$muted" "$box_vertical" "$reset" "$color" "$text" "$reset" "$padding" "$muted" "$box_vertical" "$reset" >&3
-            if [[ -n ${log_file-} ]]; then printf '%s\n' "$text" >> "$log_file"; fi
-        else
-            report_line "  $text" "$color"
-        fi
-        return
-    fi
-    # Split prose on spaces using read, never pathname expansion.
-    local -a words=()
-    read -r -a words <<< "$text"
-    for word in "${words[@]}"; do
-        if [[ -n $line ]] && (( ${#line} + ${#word} + 1 > width )); then
-            summary_text "$line" "$color" literal
-            line=''
-        fi
-        line+="${line:+ }$word"
-    done
-    summary_text "$line" "$color" literal
-}
-summary_command() {
-    local command="$command_bullet $1" description=${2-}
-    if [[ -z $description ]]; then
-        summary_text "$command" '' literal
-    elif (( ${#command} + ${#description} + 4 <= summary_width - 4 )); then
-        summary_text "$command    $description" '' literal
-    else
-        summary_text "$command" '' literal
-        summary_text "$description" "$muted"
-    fi
 }
 
 # Pad text separately from ANSI colors to align columns in all terminal modes.
@@ -967,6 +1060,10 @@ capture_output
 stage_begin 'Environment' 'Checking selected profile'
 printf '%s\n' "Environment: $sbx_environment; host setup: $sbx_host_doc" >> "$log_file"
 stage_done unchanged "Using $sbx_environment profile"
+if [[ $sbx_environment == cloud && -z $mcp_gateway_url ]]; then
+    record_issue cloud-mcp 'Cloud MCP setup' 'No MCP gateway endpoint is configured. Tool setup can continue; MCP is not configured.' \
+        $'Windows PowerShell:\n  sbx --cloud mcp ls\nConnect Context7 in Docker Agentic Platform, then load it into this sandbox using HOST_SETUP_CLOUD.md.\nSandbox Bash after attachment:\n  bash ~/sbx_local_opencode_deploy.sh\nIf no URL is registered in OpenCode or Codex, set SBX_MCP_GATEWAY_URL to the sandbox endpoint before rerun.'
+fi
 stage_begin 'Checks' 'Checking existing setup' 
 # Apply retention only to the exact deployment log filename format.
 # Keep this run and the four newest other logs, including when timestamps match.
@@ -2198,6 +2295,9 @@ def check_mcp():
     # Query only the shared managed endpoint. Never invoke upstream tools,
     # authorization helpers, or dynamic attachment/configuration tools.
     endpoint = mcp_gateway_url
+    if not endpoint:
+        note('MCP is not configured. Attach a cloud MCP server using HOST_SETUP_CLOUD.md, then rerun the installer.', 'amber')
+        return False
     # The gateway alias can be routed by the SBX HTTP proxy. Honor the same
     # proxy/NO_PROXY environment as clients instead of forcing direct DNS.
     opener = urllib.request.build_opener()
@@ -3281,6 +3381,8 @@ desired = {
         "explore": {"model": subagent_model},
     },
 }
+if not gateway_url:
+    del desired['mcp']
 existed = source.exists()
 if existed:
     with source.open(encoding="utf-8", newline="") as handle:
@@ -3312,9 +3414,9 @@ if not isinstance(data, dict):
     sys.exit(f"OpenCode configuration must contain an object: {source}")
 
 gateway = data.get('mcp', {}).get('mcp-gateway', {}) if isinstance(data.get('mcp', {}), dict) else {}
-if isinstance(gateway, dict) and ('command' in gateway or gateway.get('type', 'remote') != 'remote'):
+if gateway_url and isinstance(gateway, dict) and ('command' in gateway or gateway.get('type', 'remote') != 'remote'):
     if any(key.startswith('mcp.mcp-gateway.') for key in ownership.settings):
-        del desired['mcp']
+        desired.pop('mcp', None)
     else:
         ownership.unknown('mcp.mcp-gateway')
 desired = ownership.select(data, desired)
@@ -3431,9 +3533,11 @@ desired = {
     'agents': {'enabled': True, 'default_subagent_model': subagent_model},
     'mcp_servers': {'mcp-gateway': {'url': gateway_url, 'enabled': True}},
 }
-if hasattr(gateway, 'get') and 'command' in gateway:
+if not gateway_url:
+    del desired['mcp_servers']
+if gateway_url and hasattr(gateway, 'get') and 'command' in gateway:
     if any(key.startswith('mcp_servers.mcp-gateway.') for key in ownership.settings):
-        del desired['mcp_servers']
+        desired.pop('mcp_servers', None)
     else:
         ownership.unknown('mcp_servers.mcp-gateway')
 # Unwrap TOMLKit values for ownership checks. Keep its document for editing.

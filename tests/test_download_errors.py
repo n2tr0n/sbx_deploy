@@ -9,7 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'sbx_local_opencode_deploy.sh').read_text(encoding='utf-8')
-REPORT = 'record_issue() {' + SOURCE.split('record_issue() {', 1)[1].split('\n# Pad text separately', 1)[0]
+REPORT = ('record_issue() {' + SOURCE.split('record_issue() {', 1)[1].split('\n# Pad text separately', 1)[0] +
+          'report_line() {' + SOURCE.split('report_line() {', 1)[1].split('# FIGlet Slant', 1)[0])
 FAILURE = 'die() {' + SOURCE.split('die() {', 1)[1].split('\ncleanup_installer() {', 1)[0]
 FINISH = 'finish_installer() {' + SOURCE.split('finish_installer() {', 1)[1].split('\ntrap finish_installer EXIT', 1)[0]
 BASH = str(Path('C:/Program Files/Git/bin/bash.exe')) if os.name == 'nt' else shutil.which('bash')

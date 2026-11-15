@@ -1,5 +1,18 @@
 # Sandbox validation
 
+## Compare local and cloud detection
+
+Paste the complete `sbx_detect_report.sh` into Bash in each sandbox type.
+Label the outputs `LOCAL` and `CLOUD`, then share both. Use the same agent
+image if possible. State whether the installer ran in each sandbox.
+
+This report needs only Bash and standard tools. It installs nothing, writes
+no files, reads no credentials, and makes no network requests. It prints
+selected environment variable names, fixed machine categories, path presence,
+and filesystem types. It prints no variable values, sandbox IDs, or mount sources.
+Do not set `SBX_ENV` for this comparison. Leave existing settings unchanged.
+An installer choice is not evidence of the underlying sandbox type.
+
 ## Run
 
 Paste the complete `sbx_sandbox_validate.sh` into **sandbox Bash**, from any

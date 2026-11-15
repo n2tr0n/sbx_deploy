@@ -72,10 +72,15 @@ Load Context7 only if absent. Use its connected server name if different:
 sbx --cloud mcp load context7 --sandbox <sandbox-id>
 ```
 
-The installer uses `MCP_GATEWAY_URL` if the sandbox exports it. It does not
-assume the local gateway address is valid in cloud mode. If the variable is
-absent, find the sandbox gateway URL in the existing agent MCP configuration.
-Review the file locally. Do not share its full contents or authentication headers.
+The installer uses `SBX_MCP_GATEWAY_URL` or `MCP_GATEWAY_URL` if set. Otherwise,
+it reuses its saved URL or reads the existing `mcp-gateway` entry in OpenCode,
+then Codex. OpenCode JSONC takes precedence over JSON. Discovery reads no auth
+files and copies no authentication headers. It makes no network requests.
+
+If no endpoint exists, tool setup continues and reports MCP as pending. It
+does not create an empty MCP entry or guess the local gateway address. Attach
+the server, then rerun. If automatic discovery still finds no URL, review the
+agent MCP config locally. Do not share its full contents or authentication headers.
 
 Set the URL in **sandbox Bash**, only if needed. Replace the example value:
 
@@ -85,9 +90,9 @@ export SBX_MCP_GATEWAY_URL='<sandbox-mcp-url>'
 
 Use an HTTP or HTTPS URL without credentials, a query string, or a fragment.
 Both harnesses use this endpoint. Existing MCP headers and user overrides stay.
-Do not put an access token in the URL. If no endpoint is available, stop and
-collect evidence before configuration changes. No cloud endpoint is verified
-by this repository yet.
+Do not put an access token in the URL. No cloud endpoint is verified by this
+repository yet. Existing headers stay in their original harness. If cloud
+MCP requires authentication, its equivalent Codex setup still needs validation.
 
 ## 2. Check network rules
 
@@ -113,9 +118,13 @@ sbx --cloud policy allow network "chatgpt.com:443,releases.openai.com:443,update
 
 ## 4. Deploy and check
 
-Paste into **sandbox Bash** and select `cloud` at the environment prompt.
-The cloud hostname supplies the default. Press Enter to accept it. For an
-explicit selection before the paste, use:
+Paste into **sandbox Bash**. After the logo, always confirm the environment.
+Press Enter to accept the displayed default, or type `local` or `cloud`.
+The installer offers cloud mode when the hostname
+matches `sbx-` plus 27 lowercase letters or digits, and local sandbox ID, agent,
+and credential mode variables are absent. These markers match the supplied
+cloud report. If signals are incomplete or conflict, type the environment.
+To set the prompt default before the paste, use:
 
 ```bash
 export SBX_ENV=cloud
@@ -142,11 +151,10 @@ check_mcp
 
 The installer saves the environment and MCP URL through its ownership checks.
 The default record is `~/.local/state/sbx-deploy/environment`. Automatic
-selection can reuse it only for the same hostname. On a new sandbox, automatic
-selection also accepts a matching cloud hostname and `SBX_SANDBOX_NAME` ID.
-The hostname pattern alone supplies only a prompt default. If automatic
-selection is unavailable, the installer asks for the environment at the terminal.
-Without a terminal, set `SBX_ENV` explicitly.
+selection can reuse it only for the same hostname. `SBX_ENV` sets the default
+before saved and detected settings. Every run still asks for confirmation.
+Detection uses the reported combinations; it is not a universal guarantee for
+other images. A terminal is required, including when `SBX_ENV` is set.
 
 If setup stopped before saving the record, keep the environment exports set.
 If ownership is unknown, preserve the record and its reported baseline.
