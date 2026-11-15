@@ -4,6 +4,35 @@ For cloud SBX sandboxes of type `opencode`. Cloud runtime validation is pending.
 Use a disposable sandbox first. Run host commands in **Windows PowerShell**
 and deployment commands in **sandbox Bash**. Skip completed setup.
 
+## Create a named sandbox with its own GitHub token
+
+The user confirmed that this setup works for cloud GitHub access.
+
+For a new sandbox, run these commands in **Windows PowerShell**. Keep existing
+sandboxes. Replace `repo-a` with your chosen sandbox name in both commands.
+Check existing secrets first with `sbx --cloud secret ls`. Complete any missing
+OpenAI setup in section 2 before creating the sandbox.
+
+Store the GitHub token for this sandbox:
+
+```powershell
+sbx --cloud secret set github --sandbox repo-a
+```
+
+Paste the repository token at the secret prompt. Do not put it in the command.
+Then create the sandbox with the same name:
+
+```powershell
+sbx --cloud create --name repo-a opencode
+```
+
+For another repository, repeat with a different sandbox name and its token.
+A sandbox-scoped GitHub secret overrides the account-scoped GitHub secret.
+Use the CLI for these steps. Cloud naming in the TUI is not confirmed.
+See [cloud creation](https://docs.docker.com/ai/sandboxes/cloud/usage/#create-a-sandbox)
+and [secret scope](https://docs.docker.com/ai/sandboxes/cloud/credentials/#set-credential-scope).
+Continue below with the new sandbox name or ID.
+
 ## 1. Allow required downloads
 
 In **Windows PowerShell**:
@@ -57,7 +86,8 @@ Cloud OpenAI OAuth uses account scope. For an API key instead, use
 `sbx --cloud secret set openai`. Do not replace an existing credential unless
 you intend to change it.
 
-If the GitHub secret is missing:
+For a separate GitHub token per sandbox, use the steps at the top of this file.
+Only if you want an account-wide GitHub default and it is missing, run:
 
 ```powershell
 sbx --cloud secret set github

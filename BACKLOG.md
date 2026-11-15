@@ -3,13 +3,6 @@
 Check reports against current code before changing behavior. Keep credentials
 out of logs and shared output.
 
-- Resolve GitHub HTTP 401 in the reported cloud sandbox. The helper sends
-  `gh api user`; it reports a proxy placeholder and a rejected account request.
-  The cause is not confirmed. Check the cloud secret store, GitHub scope, token
-  validity, and setup before sandbox launch. Recovery guidance now covers CLI
-  and web UI stores. Confirm GitHub account access in the sandbox. Keep existing
-  logins and proxy placeholders.
-
 - Document how to create network exceptions in the Docker Agentic Platform
   cloud UI. Verify the available methods, rule scope, and required access.
   Add the instructions to `HOST_SETUP_CLOUD.md`. Preserve intentional denies.
@@ -54,3 +47,4 @@ out of logs and shared output.
   disabled until an authenticated cloud access path is supported.
 - Add RTK and Superpowers support.
 - Add a Git user name and email wizard.
+- Simplify host command runs; pre-assembled script that prompts for sbox name in .md file
