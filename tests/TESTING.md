@@ -16,6 +16,25 @@ python3 -m unittest discover -s tests -v
 
 On Windows, use `python` instead of `python3`.
 
+Check the PowerShell block in `HOST_SETUP_CLOUD.md` on Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_cloud_host_setup.ps1
+```
+
+This test parses the documented block and runs it with fake CLI calls and
+prompt answers. It checks fresh setup, unchanged reruns, explicit rechecks,
+existing sandboxes, interrupted creation, MCP failures, and receipt recovery.
+It checks default and custom `--static-mcp` names at creation. Missing MCP
+gateways stop setup without loading or recreating the sandbox. Unrelated MCP
+status errors also stop setup. Live creation with a gateway remains untested.
+Recorded sandboxes are also tested with a mismatched name list and with
+failed direct inspection. Neither case can trigger sandbox creation.
+It makes no network requests and runs no installer. Run the same test with
+`pwsh` to check PowerShell 7 when available. Live cloud checks remain required.
+The test uses a child scope. Its fake commands do not stay in the calling
+session, even if the test is pasted or dot-sourced.
+
 The tests need both scripts and the `.py` files in this layout:
 
 ```text
