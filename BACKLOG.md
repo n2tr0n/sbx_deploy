@@ -3,6 +3,26 @@
 Check reports against current code before changing behavior. Keep credentials
 out of logs and shared output.
 
+- Document how to create network exceptions in the Docker Agentic Platform
+  cloud UI. Verify the available methods, rule scope, and required access.
+  Add the instructions to `HOST_SETUP_CLOUD.md`. Preserve intentional denies.
+
+- Investigate intermittent cloud environment detection failure at the end of
+  this session. The user reported "Environment markers are unknown or
+  conflict" in a cloud sandbox. The cause is unknown. Current detection
+  checks the hostname pattern and environment markers. Compare reports
+  from working and failing runs before changing detection. Use manual
+  `cloud` selection until then.
+
+- Investigate cloud OpenAI HTTP 401 in both harness credential checks while
+  the host lists an account-scoped `oauth_refresh` secret. The helper reports
+  API key access when it selects `OPENAI_API_KEY` and probes `/v1/models`.
+  The user confirmed that cloud has no `SBX_CRED_OPENAI_MODE` and has
+  `OPENAI_API_KEY`. OpenCode rejects the key. Codex requests authentication.
+  The same deployment works locally. Preserve the local credential path.
+  Confirm whether cloud creation preceded secret setup. Check the cloud
+  OAuth route before changing credentials or configuration.
+
 # Feature roadmap
 
 - Validate the environment confirmation after the logo. Check Enter for local,

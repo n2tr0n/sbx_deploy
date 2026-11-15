@@ -73,6 +73,31 @@ not import the local Docker OpenCode OAuth bridge. It uses the shared Codex
 OAuth provider only when `SBX_CRED_OPENAI_MODE=oauth` is advertised. The cloud
 placeholder contract still needs sandbox validation.
 
+### OpenAI HTTP 401 with a stored OAuth secret
+
+An `oauth_refresh` entry confirms that the host has an OAuth secret. It does
+not confirm access from an existing sandbox. Docker requires credential setup
+before sandbox launch. Keep the existing secret and saved logins.
+
+The credential helper can report `API key` when it selects `OPENAI_API_KEY`.
+This label does not confirm that the value is a real API key. The helper tests
+`https://api.openai.com/v1/models` for this source. A cloud placeholder can need
+a different OAuth route. Confirm the route before changing configuration.
+
+In **sandbox Bash**, print only the advertised mode and key presence:
+
+```bash
+printf 'OpenAI mode: %s; OPENAI_API_KEY: %s\n' "${SBX_CRED_OPENAI_MODE:-unset}" "${OPENAI_API_KEY:+set}"
+```
+
+An empty key-presence field means the variable is empty or unset. Do not print
+the key or auth files. Check a model response in OpenCode and Codex. Record
+whether each response works and whether the sandbox started before the secret
+was stored. A model-list failure alone does not establish an inference failure.
+
+If GitHub also returns 401 and the host secret list has no GitHub entry, add the
+GitHub secret using section 2. It is separate from OpenAI authentication.
+
 ## 3. Connect MCP
 
 Connect Context7 through Docker Agentic Platform with the same Docker account.
