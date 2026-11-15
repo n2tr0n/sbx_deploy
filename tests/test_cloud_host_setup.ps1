@@ -1,13 +1,10 @@
-# Test the documented block with fake CLI calls. Do not contact Docker.
+# Test the host setup script with fake CLI calls. Do not contact Docker.
 & {
 $ErrorActionPreference = 'Stop'
-$guidePath = Join-Path $PSScriptRoot '..\HOST_SETUP_CLOUD.md'
-$guide = Get-Content -LiteralPath $guidePath -Raw
-$match = [regex]::Match($guide, '(?s)```powershell\r?\n(.*?)\r?\n```')
-if (-not $match.Success) { throw 'The setup block is missing.' }
+$setupPath = Join-Path $PSScriptRoot '..\sbx_cloud_host_setup.ps1'
 $tokens = $null
 $parseErrors = $null
-$ast = [Management.Automation.Language.Parser]::ParseInput($match.Groups[1].Value, [ref]$tokens, [ref]$parseErrors)
+$ast = [Management.Automation.Language.Parser]::ParseFile($setupPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 $setupBlock = $ast.GetScriptBlock()
 $originalLocalAppData = $env:LOCALAPPDATA

@@ -9,11 +9,12 @@ and deployment commands in **sandbox Bash**. Skip completed setup.
 Use Windows PowerShell 5.1 or PowerShell 7 in a terminal. Install the
 [SBX CLI](https://docs.docker.com/ai/sandboxes/) first. Your Docker account
 must have cloud access and permission to create billable sandboxes. Use a
-disposable sandbox for the first test. This block has not passed a live test.
+disposable sandbox for the first test. This script has not passed a live test.
 Cloud creation with static MCP is currently blocked in the reported v0.53.0
 setup by a missing secret named `docker`. See the recovery section below.
 
-Paste the **whole block** at once. It asks for the sandbox name first. It
+Run [sbx_cloud_host_setup.ps1](sbx_cloud_host_setup.ps1) from the repository
+root in Windows PowerShell. It asks for the sandbox name first. It
 checks cloud access, prepares credentials, adds initial network exceptions,
 creates an `opencode` sandbox, and connects Context7. Then it opens sandbox
 Bash for you to paste `sbx_local_opencode_deploy.sh`. It does not run the
@@ -22,16 +23,16 @@ action. Compute is billable while the sandbox runs.
 
 Review the displayed secret metadata. Choose `keep` only when the required
 credential exists at the stated scope. Choose `add` only when it is missing.
-Enter tokens only at the SBX secret prompt. The block never uses `--force`.
+Enter tokens only at the SBX secret prompt. The script never uses `--force`.
 Keep intentional denies. Initial allow rules do not override account denies.
-The block does not change account policy or edit an existing sandbox policy.
+The script does not change account policy or edit an existing sandbox policy.
 
 Context7 needs one browser step. In Docker Agentic Platform, open **MCP**.
 Connect Context7 and authorize access with the same Docker account. If it is
 not listed, add `https://mcp.context7.com/mcp/oauth` as a remote MCP URL.
-Use the connected server name when the block asks for it. This step follows
+Use the connected server name when the script asks for it. This step follows
 [Docker's MCP connection instructions](https://docs.docker.com/agentic-platform/mcp/).
-Complete this connection before sandbox creation. The block passes the server
+Complete this connection before sandbox creation. The script passes the server
 name with `--static-mcp`. A sandbox created without an MCP gateway cannot
 gain one through `mcp load` on the tested CLI.
 
@@ -47,182 +48,14 @@ Use `recheck` after changing Docker accounts, secrets, or sandbox state.
 The receipt does not prove that an expired sandbox still exists.
 
 ```powershell
-& {
-    # Prepare one cloud sandbox. Preserve secrets and policies. Do not deploy.
-    $ErrorActionPreference = 'Stop'
-    $sandboxName = (Read-Host 'Desired cloud sandbox name').Trim()
-    if ($sandboxName -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9]$' -or $sandboxName -ieq 'default') { throw 'Use 2-63 ASCII letters, numbers, or hyphens. Start and end with a letter or number. Do not use default.' }
-    if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is missing. Run this block in Windows PowerShell.' }
-    $stateDirectory = Join-Path $env:LOCALAPPDATA 'sbx-deploy\cloud'
-    $statePath = Join-Path $stateDirectory ($sandboxName.ToLowerInvariant() + '.json')
-    $connectCommand = "sbx --debug=false --cloud exec -it $sandboxName bash"
-    $mutex = [Threading.Mutex]::new($false, ('Local\SBXDeployCloud-' + $sandboxName.ToLowerInvariant()))
-    $locked = $false
-    try {
-        try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
-        if (-not $locked) { throw 'Another setup is using this name. Wait for it to finish.' }
-        foreach ($path in @((Join-Path $env:LOCALAPPDATA 'sbx-deploy'), $stateDirectory, $statePath)) {
-            if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Setup path is a link. Keep it and review ownership: $path" }
-        }
-        function Ask-Choice([string]$Message, [string[]]$Choices) {
-            while ($true) {
-                $answer = (Read-Host $Message).Trim().ToLowerInvariant()
-                if ($answer -eq 'stop') { throw 'Setup stopped. Keep the receipt and rerun this block to continue.' }
-                if ($Choices -contains $answer) { return $answer }
-                Write-Host ('Enter ' + ($Choices -join ', ') + ', or stop.')
-            }
-        }
-        function Invoke-Cloud([string[]]$CliArgs) {
-            & sbx --debug=false --cloud @CliArgs
-            if ($LASTEXITCODE -ne 0) { throw "SBX failed (exit $LASTEXITCODE). Read the error above. Fix the cause and rerun this block. Receipt: $statePath" }
-        }
-        function Save-Setup {
-            $json = $state | ConvertTo-Json -Depth 4
-            if ((Test-Path -LiteralPath $statePath) -and ([IO.File]::ReadAllText($statePath) -ceq $json)) { return }
-            [IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
-            $temporaryPath = Join-Path $stateDirectory ([IO.Path]::GetRandomFileName())
-            try {
-                [IO.File]::WriteAllText($temporaryPath, $json, [Text.UTF8Encoding]::new($false))
-                if (Test-Path -LiteralPath $statePath) { [IO.File]::Replace($temporaryPath, $statePath, [NullString]::Value) } else { [IO.File]::Move($temporaryPath, $statePath) }
-            } finally {
-                if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath }
-            }
-        }
-        $state = [pscustomobject]@{ owner = 'sbx-deploy-cloud-setup'; version = 1; name = $sandboxName; prepared = $false; creationPending = $false; created = $false; complete = $false; mcp = 'context7'; network = @() }
-        if (Test-Path -LiteralPath $statePath) {
-            try { $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { throw "Cannot read receipt. Keep it and review it before repair: $statePath" }
-            $expectedKeys = @($state.PSObject.Properties.Name | Sort-Object)
-            $savedKeys = @($saved.PSObject.Properties.Name | Sort-Object)
-            if (($expectedKeys -join ',') -cne ($savedKeys -join ',') -or $saved.owner -cne $state.owner -or $saved.version -ne 1 -or $saved.name -ine $sandboxName) { throw "Unknown receipt. Keep it and review it before repair: $statePath" }
-            foreach ($key in @('prepared', 'creationPending', 'created', 'complete')) { if ($saved.$key -isnot [bool]) { throw "Invalid receipt field $key. Keep and review: $statePath" } }
-            if (-not $saved.prepared -or ($saved.created -and -not $saved.creationPending) -or ($saved.complete -and -not $saved.created)) { throw "Invalid receipt progress. Keep and review: $statePath" }
-            if ($saved.mcp -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$' -or @($saved.network).Count -eq 0) { throw "Invalid receipt. Keep and review: $statePath" }
-            foreach ($target in $saved.network) { if ($target -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*:[0-9]{1,5}$') { throw "Invalid network target in receipt. Keep and review: $statePath" } }
-            $state = $saved
-            if ($state.complete) {
-                Write-Host 'Saved host setup is complete. No cloud checks have run.'
-                if ((Ask-Choice 'Enter skip to use the receipt, or recheck to query cloud state' @('skip', 'recheck')) -eq 'skip') {
-                    Write-Host 'To open sandbox Bash, run this command. Then paste the complete Bash installer:'
-                    Write-Host $connectCommand
-                    return
-                }
-                $state.prepared = $false
-                $state.complete = $false
-            }
-        }
-        if (-not (Get-Command sbx -CommandType Application -ErrorAction SilentlyContinue)) { throw 'SBX CLI is missing. Install it from https://docs.docker.com/ai/sandboxes/ and reopen PowerShell.' }
-        Write-Host '[1/5] Checking cloud access'
-        while ($true) {
-            $sandboxNames = @(& sbx --debug=false --cloud ls --quiet)
-            if ($LASTEXITCODE -eq 0) { break }
-            $action = Ask-Choice 'Cloud access failed. Enter login to sign in, or retry after repair' @('login', 'retry')
-            if ($action -eq 'login') { Invoke-Cloud @('login') }
-        }
-        $exists = @($sandboxNames | Where-Object { $_.Trim() -ieq $sandboxName -or $_.Trim() -ieq "opencode/$sandboxName" }).Count -gt 0
-        $inspected = $false
-        if ($state.created) {
-            # A name-list mismatch does not prove that a recorded sandbox is absent.
-            try { Invoke-Cloud @('inspect', $sandboxName) } catch { throw "Cannot inspect the recorded sandbox $sandboxName. Keep its receipt and secrets. Check the Docker account and the error above. $($_.Exception.Message)" }
-            $exists = $true
-            $inspected = $true
-        }
-        if ($exists -and -not $state.created) {
-            if (-not $state.creationPending) { throw 'This sandbox name already exists. Keep it. Use a new name for guided creation, or use the manual steps below for the existing sandbox.' }
-            Invoke-Cloud @('inspect', $sandboxName)
-            $inspected = $true
-            Write-Host 'A prior creation may have finished before its receipt was saved.'
-            Ask-Choice 'Check the account, name, and opencode type above. Enter resume only if this is the sandbox you created with this block' @('resume') | Out-Null
-            $state.created = $true
-            Save-Setup
-        }
-        Write-Host '[2/5] Preparing cloud credentials'
-        if (-not $state.prepared) {
-            Invoke-Cloud @('secret', 'ls')
-            Write-Host 'OpenAI: keep an existing account credential or a matching sandbox API key. OAuth uses account scope.'
-            $openai = Ask-Choice 'OpenAI: enter keep, oauth to add missing account OAuth, or key to add a missing sandbox API key' @('keep', 'oauth', 'key')
-            if ($state.created -and $openai -ne 'keep') { throw 'This sandbox already started. Keep it. Set the missing secret with the manual steps below, then test a new named sandbox. Do not replace startup credentials here.' }
-            if ($openai -eq 'oauth') { Invoke-Cloud @('secret', 'set', 'openai', '--oauth') }
-            if ($openai -eq 'key') { Invoke-Cloud @('secret', 'set', 'openai', '--sandbox', $sandboxName) }
-            Write-Host 'GitHub: prefer a token scoped to this sandbox. keep can also use an existing account default.'
-            $github = Ask-Choice 'GitHub: enter keep for an existing usable secret, or add for a missing sandbox token' @('keep', 'add')
-            if ($state.created -and $github -eq 'add') { throw 'This sandbox already started. Keep it. Prepare the missing GitHub secret with the manual steps below, then test a new named sandbox.' }
-            if ($github -eq 'add') { Invoke-Cloud @('secret', 'set', 'github', '--sandbox', $sandboxName) }
-            Invoke-Cloud @('secret', 'ls')
-            Ask-Choice 'Check secret names and scopes above. Enter ready only when OpenAI and GitHub are configured' @('ready') | Out-Null
-            Write-Host '[3/5] Reviewing network access'
-            Invoke-Cloud @('policy', 'ls')
-            if ($state.created) {
-                Invoke-Cloud @('policy', 'ls', $sandboxName)
-                Write-Host 'Existing network rules stay unchanged. Check required downloads in the manual section below.'
-            } else {
-                $state.network = @('chatgpt.com:443', 'auth.openai.com:443', 'api.openai.com:443', 'releases.openai.com:443', 'update.code.visualstudio.com:443', 'vscode.download.prss.microsoft.com:443', 'github.com:443', 'api.github.com:443', 'raw.githubusercontent.com:443', 'release-assets.githubusercontent.com:443', 'opencode.ai:443', 'registry.npmjs.org:443', 'deb.debian.org:80', 'deb.debian.org:443', 'security.debian.org:80', 'security.debian.org:443')
-                Write-Host ('Initial sandbox exceptions: ' + ($state.network -join ', '))
-                Write-Host 'Agent and kit rules can allow other hosts. Account denies still apply. No account rules will change.'
-            }
-            Ask-Choice 'Review access and intentional denies. Enter ready to continue' @('ready') | Out-Null
-            $state.prepared = $true
-            Save-Setup
-        } else { Write-Host 'Saved preparation is complete. Credential setup is skipped.' }
-        Write-Host '[4/5] Creating or resuming the sandbox'
-        if (-not $state.created) {
-            Write-Host 'Before creation, connect Context7 under MCP in Docker Agentic Platform. Use the same Docker account.'
-            Write-Host 'If needed, add remote URL https://mcp.context7.com/mcp/oauth and authorize access.'
-            $serverName = (Read-Host "Connected Context7 server name [Enter for $($state.mcp)]").Trim()
-            if ($serverName) {
-                if ($serverName -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw 'Use the connected server name with letters, numbers, periods, underscores, or hyphens.' }
-                $state.mcp = $serverName
-            }
-            Write-Host 'Creation uses 2 CPUs, 4 GiB, a two-hour timeout, and the stop action. Compute is billable.'
-            Ask-Choice 'Enter create to create this cloud sandbox' @('create') | Out-Null
-            $state.creationPending = $true
-            Save-Setup
-            $createArgs = @('create', '--name', $sandboxName, '--cpus', '2', '--memory', '4g', '--ttl', '2h', '--on-timeout', 'stop', '--static-mcp', $state.mcp)
-            foreach ($target in $state.network) { $createArgs += @('--allow-network', $target) }
-            Invoke-Cloud ($createArgs + @('opencode'))
-            $state.created = $true
-            Save-Setup
-        }
-        if (-not $inspected) { Invoke-Cloud @('inspect', $sandboxName) }
-        Invoke-Cloud @('policy', 'ls', $sandboxName)
-        Invoke-Cloud @('exec', $sandboxName, 'bash', '-lc', 'test $(id -un) = agent && command -v bash flock timeout apt-get python3 opencode && sudo -n true')
-        Write-Host '[5/5] Connecting Context7'
-        Write-Host "Checking connected server: $($state.mcp)"
-        # A gateway must be configured at creation. Keep other errors distinct.
-        $mcpStatus = & {
-            $ErrorActionPreference = 'Continue'
-            $lines = @(& sbx --debug=false --cloud mcp ls $sandboxName 2>&1)
-            [pscustomobject]@{ code = $LASTEXITCODE; lines = $lines }
-        }
-        $mcpText = ($mcpStatus.lines | ForEach-Object { $_.ToString() }) -join "`n"
-        if ($mcpStatus.code -eq 0) {
-            foreach ($line in $mcpStatus.lines) { Write-Host $line }
-            $mcpAction = Ask-Choice 'Enter keep if Context7 is already active, or load to attach it' @('keep', 'load')
-        } elseif ($mcpText -match '(?m)^\s*(?:not_found:\s*)?sandbox has no MCP gateway\s*$') {
-            throw "This sandbox has no MCP gateway. The tested CLI requires --static-mcp at creation. Keep this sandbox, receipt, and secrets. Rerun the updated block with a new sandbox name. Configure its GitHub secret before creation; a secret scoped to this name will not transfer. Receipt: $statePath"
-        } else {
-            foreach ($line in $mcpStatus.lines) { Write-Host $line }
-            throw "MCP status failed (exit $($mcpStatus.code)). Fix the reported error and rerun. Receipt: $statePath"
-        }
-        if ($mcpAction -eq 'load') { Invoke-Cloud @('mcp', 'load', $state.mcp, '--sandbox', $sandboxName) }
-        Invoke-Cloud @('mcp', 'ls', $sandboxName)
-        Ask-Choice 'Check that Context7 is active, not skipped. Enter ready to finish, or stop to repair it' @('ready') | Out-Null
-        $state.complete = $true
-        Save-Setup
-        Write-Host 'Host setup is complete. Opening sandbox Bash. Paste the complete sbx_local_opencode_deploy.sh there.'
-        Write-Host 'Select cloud in the Bash installer. It will check downloads, credentials, and MCP. Test inference afterward.'
-        Invoke-Cloud @('exec', '-it', $sandboxName, 'bash')
-    } finally {
-        if ($locked) { $mutex.ReleaseMutex() }
-        $mutex.Dispose()
-    }
-}
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sbx_cloud_host_setup.ps1
 ```
 
 If a command fails, keep the sandbox and receipt. Fix the reported cause and
-paste the same block again. A failed SBX command stops setup and reports its
-exit code. If creation finished before interruption, the block asks you to
+run the same script again. A failed SBX command stops setup and reports its
+exit code. If creation finished before interruption, the script asks you to
 inspect the existing sandbox before it resumes. It never deletes a sandbox.
-Do not run two setup blocks for the same name at the same time.
+Do not run two setup scripts for the same name at the same time.
 
 ### Creation reports a missing secret named docker
 
@@ -273,7 +106,7 @@ Cloud diagnostics: all 6 checks pass. Authentication, API access,
 subscription, and TLS checks pass.
 OpenAI OAuth exists at account scope.
 Local docker-mcp registration and browser sign-in did not fix creation.
-Manual controls, outside the PowerShell setup block:
+Manual controls, outside the PowerShell setup script:
 - create --name cloud-test02 --static-mcp context7 opencode: same failure.
 - create --name mcp-test01 --static-mcp context7 shell: same failure.
 - create --name mcp-test01 shell: succeeds.
@@ -294,7 +127,7 @@ or changing existing credentials?
 Do not retry creation or change credentials without new evidence.
 Do not share tokens, authorization headers,
 or private gateway URLs. Keep the receipt and existing secrets. After the
-cause is resolved, rerun the block with the same name. It checks for an
+cause is resolved, rerun the script with the same name. It checks for an
 existing sandbox before retrying creation.
 
 ### Other recovery checks
@@ -306,8 +139,8 @@ and Docker account. Setup does not recreate the recorded sandbox.
 
 If the MCP status check reports `sandbox has no MCP gateway`, keep the sandbox,
 receipt, and secrets. The user confirmed that `mcp load` cannot add the missing
-gateway. Run the updated block with a new sandbox name. Connect Context7 before
-creation. The block uses `--static-mcp` to request the gateway. A GitHub secret
+gateway. Run the updated script with a new sandbox name. Connect Context7 before
+creation. The script uses `--static-mcp` to request the gateway. A GitHub secret
 scoped to the old name does not transfer. Configure a secret for the new name
 at its secret prompt, or use a suitable existing account default. Do not remove
 the old sandbox to reuse its name. Other MCP status errors also stop setup.
@@ -321,7 +154,7 @@ prepared credentials when resuming an incomplete run.
 Network rules cover known installer downloads and common Debian sources.
 They do not prove connectivity. Image-specific mirrors, redirects, inference,
 and VS Code tunnel access can need more hosts. Follow installer errors and
-policy logs. Add only missing access. Preserve intentional denies. This block
+policy logs. Add only missing access. Preserve intentional denies. This script
 does not attach a startup kit or publish ports. Cloud Webtop stays disabled.
 
 The commands below are manual recovery steps. Skip completed work after the
@@ -533,7 +366,7 @@ sbx --cloud mcp ls <sandbox-id>
 ```
 
 If the gateway exists, load Context7 only if absent. Use its connected server
-name if different. If no gateway exists, use the Windows setup block with a
+name if different. If no gateway exists, run the Windows setup script with a
 new sandbox name. Preserve the old sandbox and its secrets.
 
 ```powershell
