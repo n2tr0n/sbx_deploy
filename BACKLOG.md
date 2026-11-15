@@ -10,13 +10,12 @@ out of logs and shared output.
   and restart persistence still need cloud checks. See
   [HOST_SETUP_CLOUD.md](HOST_SETUP_CLOUD.md).
 
-- **Remaining deployment checks:** Complete the remaining
-  [sandbox checks](AGENTS.md#validation): Toronto timezone on fresh setup;
-  preservation of an existing timezone, user edits, and logins; user-local
-  OpenCode upgrades while image installations remain unchanged; safe recovery
-  after interruption; and an unchanged rerun with no installs, network calls,
-  configuration writes, or new backups. Use
-  [SANDBOX_VALIDATION.md](SANDBOX_VALIDATION.md) for evidence collection.
+- **tmux snapshot output:** tmux-resurrect works on the tested host, as confirmed
+  by the user. Local fix adds the `hostname` package. Snapshot path diagnostics
+  now count as a warning and skip seeding. The user confirmed that `hostname`
+  works and the path check prints no errors with tmux running. Sandbox checks
+  remain: warning counts, preserved saves, and an unchanged rerun with no
+  installs, network calls, writes, or new backups.
 
 - **VS Code startup kit:** Resolve attachment `409 Conflict` about an effective
   OAuth credential policy change. The kit declares no credentials; the cause
@@ -38,4 +37,4 @@ out of logs and shared output.
 - Add a module system.
 - Add RTK and Superpowers support.
 - Add a Git user name and email wizard.
-- Better / seperate cloud support.
+- Better / seperate cloud support - MCP gateway and credentials

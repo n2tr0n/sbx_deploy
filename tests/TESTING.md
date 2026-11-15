@@ -29,6 +29,7 @@ tests/
   test_package_timezone.py
   test_sandbox_validator.py
   test_shell_startup.py
+  test_tmux_snapshot.py
 ```
 
 Use a mounted repository or copy these files together. Pasting the installer
@@ -55,6 +56,9 @@ does not copy the tests into the sandbox.
 
 The tests read code from the installer and use temporary files. They do not run
 the full installer, make network requests, or change live configs or logins.
+
+`test_tmux_snapshot.py` checks snapshot path diagnostics, warning counts,
+failure exit codes, and saved snapshot preservation.
 
 `OK` means all tests passed. A skipped check did not run. Read skip messages
 before you report full coverage. The tests do not prove that authentication,

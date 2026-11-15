@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
@@ -67,6 +68,7 @@ sbx_save_and_run() {
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
@@ -248,7 +250,7 @@ done <<'SBX_BANNER'
    \/     _______   _______ ___   ___                                   \/
    /\    /  _____/ /  __   \\  \ /  /                                   /\
   /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
-  \  /  —————/  //  /_/   /  /  \  \                                   \  /
+  \  /  —————/  //  /_/   /  /  \  \           Opencode/Local          \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
    /\  \__  Nitron's Deployment Script for SBX v0.5.1a             __/  /\
  _/  \____\_______________________________________________________/____/  \_
@@ -889,7 +891,7 @@ SBX_TZDATA
 }
 required_packages=(
     ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
-    unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
+    unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr hostname
     libaa-bin python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux tzdata
 )
 missing_packages=()
@@ -1361,6 +1363,9 @@ new_conf="$work_dir/tmux.conf"
 cat > "$new_conf" <<'TMUX_CONF'
 set -g mouse on
 
+# Use Bash startup files. Keep other default shells and later user overrides.
+if-shell -F '#{==:#{default-shell},/bin/sh}' 'set-option -g default-shell /bin/bash'
+
 set-option -g history-limit 1000000000
 
 #set -g pane-border-format "#{pane_index}"
@@ -1428,12 +1433,16 @@ stage_done verified 'Plugin bindings loaded'
 # Preserve the supplied tmux configuration.
 stage_begin 'tmux snapshot' 'Checking saved resurrect state'
 resurrect_state_dir=$(
+    exec 2> "$work_dir/resurrect-path.stderr"
     # Third-party helpers are not written for nounset.
     set +u
     source "$resurrect_dir/scripts/helpers.sh" || exit $?
     resurrect_dir
-) || die 'Cannot resolve the tmux-resurrect save directory.'
-[[ $resurrect_state_dir == /* ]] || die 'tmux-resurrect save directory must be absolute.'
+) || {
+    resolve_status=$?
+    cat -- "$work_dir/resurrect-path.stderr" >&2
+    die 'Cannot resolve the tmux-resurrect save directory.' "$resolve_status"
+}
 seed_resurrect_snapshot() (
     local state_dir=$1 seed=tmux_resurrect_sbx_default.txt saved staged= compare_status snapshot
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
@@ -1501,11 +1510,19 @@ SBX_RESURRECT_SNAPSHOT
         exists "$state_dir/last" || die 'Cannot publish the tmux snapshot last link.' "$compare_status"
     fi
 )
-seed_resurrect_snapshot "$resurrect_state_dir"
-if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Seeded snapshot; in tmux press Ctrl-b, then Ctrl-r'
+if [[ -s $work_dir/resurrect-path.stderr ]]; then
+    # A helper can print an error but return success with an incorrect path.
+    cat -- "$work_dir/resurrect-path.stderr" >&2
+    warn 'tmux-resurrect path check printed diagnostics; snapshot seed skipped. See the log.'
+    stage_done attention 'Snapshot seed skipped; saved snapshots preserved'
 else
-    stage_done unchanged 'Existing resurrect state preserved'
+    [[ $resurrect_state_dir == /* ]] || die 'tmux-resurrect save directory must be absolute.'
+    seed_resurrect_snapshot "$resurrect_state_dir"
+    if [[ -e $work_dir/changed ]]; then
+        stage_done changed 'Seeded snapshot; in tmux press Ctrl-b, then Ctrl-r'
+    else
+        stage_done unchanged 'Existing resurrect state preserved'
+    fi
 fi
 
 stage_begin 'Shell setup' 'Checking wrappers, PATH, and aliases'
