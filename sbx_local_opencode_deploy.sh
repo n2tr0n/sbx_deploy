@@ -4,6 +4,7 @@
 # After the logo, confirm local or cloud. Press Enter to keep the detected default.
 # Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
 # Configure cloud OpenCode OAuth with shared proxy placeholders. Keep saved logins.
+# Verify managed OAuth imports. Stop if an existing managed value differs.
 # Restart cloud OpenCode once after OAuth setup. Retry if restart was interrupted.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
@@ -438,6 +439,7 @@ SBX_BANNER
 # One editable file. Keep shared setup and environment profiles together.
 # After the logo, confirm local or cloud. Press Enter to keep the detected default.
 # Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
+# Verify managed OAuth imports. Stop if an existing managed value differs.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
@@ -3219,11 +3221,14 @@ with os.fdopen(lock_fd, 'w') as lock:
                    and item.get('id') != wanted['id'] and item.get('active') is True
                    for item in existing)):
         sys.exit(0)
+    # v2.3.0 import skips existing IDs. The public update API changes labels only.
+    # Do not delete and recreate credentials to change their expiry.
+    if current and current.get('value') != value:
+        sys.exit('Managed ' + environment + ' OpenCode OAuth entry differs; credentials left unchanged. '
+                 'Import cannot update existing IDs. Keep saved logins and auth.json. '
+                 'Review the managed sbx-openai entry before retrying; reauthorization alone may not repair it.')
     receipt = None
     if environment == 'cloud':
-        # Import skips existing IDs. Never claim that a different value was updated.
-        if current and current.get('value') != value:
-            sys.exit('Managed cloud OpenCode OAuth entry differs; preserve it and review it before retrying.')
         receipt = 'sbx-opencode-oauth-service-v1\n' + hashlib.sha256(
             json.dumps(value, sort_keys=True).encode()).hexdigest() + '\n'
         if service_receipt.is_symlink() or (service_receipt.exists() and not service_receipt.is_file()):
@@ -3234,17 +3239,23 @@ with os.fdopen(lock_fd, 'w') as lock:
                 sys.exit('Unknown OpenCode service receipt; preserve it and review it before retrying.')
         else:
             saved = None
-    if not current or current.get('value') != value:
+    if not current:
         run('import', payload=json.dumps([wanted]))
-        Path(changed).touch()
-        if environment == 'cloud':
-            # Verify persistence before restarting or recording completion.
+        # Verify persistence before reporting a change in either environment.
+        try:
             imported = json.loads(run('export'))
-            if not isinstance(imported, list) or not any(
+        except (ValueError, TypeError):
+            sys.exit('Cannot verify OpenCode OAuth import; keep saved logins and review the credential inventory before retrying.')
+        if (not isinstance(imported, list)
+                or sum(isinstance(item, dict) and item.get('id') == wanted['id']
+                       for item in imported) != 1
+                or not any(
                     item.get('id') == wanted['id'] and item.get('integrationID') == 'openai'
                     and item.get('active') is True and item.get('value') == value
-                    for item in imported if isinstance(item, dict)):
-                sys.exit('OpenCode OAuth import was not applied; credentials preserved. Review the inventory before retrying.')
+                    for item in imported if isinstance(item, dict))):
+            sys.exit('OpenCode OAuth import was not applied; keep saved logins. Review the credential inventory before retrying.')
+        Path(changed).touch()
+        if environment == 'cloud':
             saved = None
     if receipt is not None and saved != receipt:
         # Standalone auth changes do not refresh a running background service.

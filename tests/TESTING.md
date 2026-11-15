@@ -51,6 +51,8 @@ does not copy the tests into the sandbox.
   It checks cloud OAuth imports without a bridge, fixed expiry, credential ID
   conflicts, and the local bridge requirement. It checks cloud service restart
   receipts, unchanged runs, failed restart recovery, and skipped imports.
+  It checks local skipped imports and changed expiry failures. It preserves
+  saved entries and models imports that skip existing IDs, as v2.3.0 does.
 - `test_config_ownership.py` checks fresh configs, custom settings, MCP headers,
   other MCP servers, unchanged reruns, and interrupted config updates.
 - `test_download_errors.py` checks local and cloud recovery commands, known

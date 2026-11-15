@@ -87,7 +87,10 @@ class AuthenticationSelection(unittest.TestCase):
                         self.assertNotEqual(result.code, 0)
                 else:
                     self.assertEqual(status, 0)
-            self.assertEqual(changed.exists(), bool(mutations or (restarts and not restart_status)))
+            self.assertEqual(changed.exists(), bool((mutations and not import_noop)
+                                                   or (restarts and not restart_status)))
+            for original in entries:
+                self.assertIn(original, stored)
             self.restarts = len(restarts)
             self.receipt_written = service_receipt.exists()
             if not restarts or restart_status:
@@ -118,10 +121,25 @@ class AuthenticationSelection(unittest.TestCase):
     def test_opencode_inactive_selection(self):
         self.assertEqual(self.opencode([self.managed(False)]), [])
 
-    def test_opencode_selected_host_refresh_and_retry(self):
-        mutations = self.opencode([self.managed()], expiry=200)
-        self.assertTrue(mutations[0][1][0]['active'])
-        self.assertEqual(self.opencode(mutations[0][1], expiry=200), [])
+    def test_opencode_changed_expiry_stops_without_reimport(self):
+        # v2.3.0 import skips existing IDs. Never report a successful update.
+        for _ in range(2):
+            self.assertEqual(self.opencode([self.managed()], expiry=200, status=1), [])
+            self.assertEqual(self.restarts, 0)
+
+    def test_local_skipped_import_is_not_recorded_as_complete(self):
+        self.opencode([], import_noop=True, status=1)
+        self.assertEqual(self.restarts, 0)
+
+    def test_local_managed_id_with_private_tokens_is_preserved(self):
+        record = self.managed()
+        record['value']['access'] = 'private-local-token'
+        self.assertEqual(self.opencode([record], status=1), [])
+
+    def test_local_import_preserves_other_saved_logins(self):
+        other = {'id': 'saved', 'integrationID': 'anthropic', 'active': True,
+                 'value': {'type': 'key', 'key': 'private-fixture'}}
+        self.assertEqual(len(self.opencode([other])), 1)
 
     def test_cloud_opencode_without_bridge_and_unchanged_retry(self):
         mutations = self.opencode([], environment='cloud', bridge=False)

@@ -7,20 +7,6 @@ out of logs and shared output.
   cloud UI. Verify the available methods, rule scope, and required access.
   Add the instructions to `HOST_SETUP_CLOUD.md`. Preserve intentional denies.
 
-- Validate the cloud OpenCode OAuth service restart in the full installer.
-  The user confirmed that the exact placeholder import supports standalone
-  inference in OpenCode v2.3.0. Normal inference failed until `opencode service
-  restart`, then passed. Deployment now restarts once and records success.
-  Check fresh deployment, an unchanged rerun with no restart or receipt write,
-  interrupted restart recovery, and saved login preservation. Keep OAuth and
-  the working local credential path. Codex inference still needs confirmation.
-
-- Review local OpenCode managed OAuth updates. OpenCode v2.3.0 `auth import`
-  skips existing credential IDs. It does not update values. The cloud path
-  now verifies imports and stops on a different existing managed value.
-  The local expiry-update path still needs a supported update operation and
-  a check against actual import semantics. Preserve saved logins and IDs.
-
 # Feature roadmap
 
 - Validate the environment confirmation after the logo. Check Enter for local,
