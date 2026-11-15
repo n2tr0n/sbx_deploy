@@ -3,13 +3,6 @@
 Check reports against current code before changing behavior. Keep credentials
 out of logs and shared output.
 
-- **Cloud validation:** Confirm full deployment after the VS Code download
-  policy fix. Check the new DNS recovery summary: cloud target selection,
-  scoped commands, copyable lines, exit status, log path, verbose output, and
-  terminal fallbacks. Cloud authentication, inference, MCP, tunnel connections,
-  and restart persistence still need cloud checks. See
-  [HOST_SETUP_CLOUD.md](HOST_SETUP_CLOUD.md).
-
 - **VS Code startup kit:** Resolve attachment `409 Conflict` about an effective
   OAuth credential policy change. The kit declares no credentials; the cause
   remains unverified. Keep the sandbox and OAuth bindings. Use `vscode_tunnel`
@@ -30,4 +23,4 @@ out of logs and shared output.
 - Add a module system.
 - Add RTK and Superpowers support.
 - Add a Git user name and email wizard.
-- Better / seperate cloud support - MCP gateway and credentials
+- Create a separate cloud installer with MCP gateway and credential support.
