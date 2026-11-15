@@ -1,5 +1,19 @@
 # Sandbox validation
 
+## Compare local and cloud detection
+
+Paste the complete `sbx_sandbox_type_report.sh` into Bash in each sandbox type.
+Label the outputs `LOCAL` and `CLOUD`, then share both. Use the same agent
+image if possible. State whether the installer ran in each sandbox.
+
+This report needs only Bash and standard tools. It installs nothing, writes
+no files, reads no credentials, and makes no network requests. It prints
+selected environment variable names, fixed machine categories, path presence,
+and filesystem types. It prints no variable values, sandbox IDs, or mount sources.
+Do not set `SBX_ENV` for this comparison. Leave existing settings unchanged.
+An installer choice is not evidence of the underlying sandbox type.
+The report collects clues. It does not select a sandbox type or validate deployment.
+
 ## Run
 
 Paste the complete `sbx_sandbox_validate.sh` into **sandbox Bash**, from any
@@ -24,6 +38,10 @@ five-second limits. Network checks use fixed URLs, HEAD requests, and the curren
 proxy, with six-second request limits; allow about one minute. They send no login
 headers, follow no redirects, and download no bodies. Host proxy policy still
 applies. Proxy values and response headers stay out of reports.
+For cloud checks, export `SBX_ENV=cloud` first. Set `SBX_MCP_GATEWAY_URL` if
+the sandbox does not export `MCP_GATEWAY_URL`. Unknown or unsafe gateway URLs
+are not probed. Reports show variable presence and fixed environment categories,
+not URLs, cloud IDs, or credential values. See [cloud setup](HOST_SETUP_CLOUD.md).
 
 ## Interpret results
 

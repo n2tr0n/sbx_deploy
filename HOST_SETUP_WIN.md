@@ -104,7 +104,23 @@ Context7 needs no API key or credential binding. Use `sbx mcp` for this setup.
 ## 4. Deploy and check
 
 Configure any optional startup kit or desktop access below before deployment.
-Paste the complete `sbx_local_opencode_deploy.sh` into **sandbox Bash** as `agent`.
+Paste into **sandbox Bash**. After the logo, always confirm the environment.
+Press Enter to accept the displayed default, or type `local` or `cloud`.
+The installer offers local mode when `SANDBOX_ID`,
+`SANDBOX_NAME`, `SANDBOX_VM_ID`, and `SBX_AGENT` are nonempty and the hostname
+does not match the cloud pattern. These markers match the supplied local report.
+For unknown or conflicting markers, select `local` at the prompt. For an
+explicit prompt default before the paste, use:
+
+```bash
+export SBX_ENV=local
+```
+
+Paste the complete `sbx_local_opencode_deploy.sh` as `agent`.
+The installer saves this selection as the default on the same hostname.
+Reruns still ask for confirmation.
+If it cannot select the environment, export `SBX_ENV=local` again. A cloud
+sandbox uses [HOST_SETUP_CLOUD.md](HOST_SETUP_CLOUD.md).
 New timezone setup uses `America/Toronto`; existing timezone settings stay.
 
 If setup fails, follow the printed recovery commands, then rerun:
