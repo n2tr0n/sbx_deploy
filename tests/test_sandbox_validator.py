@@ -112,7 +112,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(set(validator.PACKAGES), set(packages + ['cmatrix']))
         self.assertIn('$HOME/' + validator.LEGACY_OPENCODE, source)
         self.assertIn('opencode_binary=$(find_opencode)', source)
-        self.assertIn('mcp_gateway_url=' + validator.GATEWAY + '\n', source)
+        self.assertIn('MCP_GATEWAY_URL:-' + validator.GATEWAY, source)
 
     def test_default_report_has_no_secrets_or_optional_probes(self):
         secret = 'DO-NOT-PRINT-THIS-CREDENTIAL'
@@ -169,6 +169,24 @@ class ValidatorTests(unittest.TestCase):
             self.assertNotIn('--location', args)
             self.assertNotIn('--header', args)
             self.assertIn('--max-time', args)
+
+    def test_cloud_network_probes_use_validated_endpoint_and_hide_urls(self):
+        for gateway in ('https://gateway.example/mcp', '', 'https://user:PRIVATE@gateway.example/mcp'):
+            calls = []
+            def run(args, **kwargs):
+                calls.append(args)
+                return 0, '200'
+            with patch.dict(validator.os.environ, {'SBX_ENV': 'cloud', 'SBX_MCP_GATEWAY_URL': gateway}, clear=True), \
+                    patch.object(validator.shutil, 'which', return_value='/usr/bin/curl'), \
+                    patch.object(validator, 'run', side_effect=run):
+                report = validator.network()
+            self.assertNotIn('PRIVATE', json.dumps(report))
+            self.assertNotIn('gateway.example', json.dumps(report))
+            if gateway == 'https://gateway.example/mcp':
+                self.assertIn(gateway, [args[-1] for args in calls])
+            else:
+                self.assertNotIn('mcp_gateway', report)
+            self.assertNotIn(validator.GATEWAY, [args[-1] for args in calls])
 
     def test_timeout_kills_process_group(self):
         process = types.SimpleNamespace(pid=123, communicate=unittest.mock.Mock(

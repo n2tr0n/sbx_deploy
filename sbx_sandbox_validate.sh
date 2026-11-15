@@ -248,7 +248,14 @@ def network():
     if not binary:
         return {'status': 'unavailable'}
     results = {}
-    for name, url in ENDPOINTS.items():
+    endpoints = dict(ENDPOINTS)
+    gateway = os.environ.get('SBX_MCP_GATEWAY_URL') or os.environ.get('MCP_GATEWAY_URL')
+    if gateway and re.fullmatch(r'https?://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[a-zA-Z0-9._~/-]*)?', gateway):
+        endpoints['mcp_gateway'] = gateway
+    elif gateway or os.environ.get('SBX_ENV') == 'cloud':
+        # Do not send probes to unvalidated URLs or guess a cloud endpoint.
+        endpoints.pop('mcp_gateway')
+    for name, url in endpoints.items():
         # -q must be first. Do not read curlrc, follow redirects, or print headers.
         code, output = run([binary, '-q', '--head', '--silent', '--output', '/dev/null',
                             '--connect-timeout', '3', '--max-time', '6', '--retry', '0',
@@ -296,10 +303,19 @@ def collect(args):
     report['environment'] = {'present': {name: bool(os.environ.get(name)) for name in (
         'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'BASH_ENV',
-        'OPENAI_API_KEY', 'GITHUB_TOKEN', 'GH_TOKEN')},
+        'OPENAI_API_KEY', 'GITHUB_TOKEN', 'GH_TOKEN', 'MCP_GATEWAY_URL', 'SBX_MCP_GATEWAY_URL')},
         'credential_modes': {name: os.environ.get(name) if os.environ.get(name) in ('oauth', 'apiKey', 'none')
                              else 'other' if os.environ.get(name) else 'unset'
                              for name in ('SBX_CRED_OPENAI_MODE', 'SBX_CRED_GITHUB_MODE')}}
+    # Return fixed categories. Do not expose hostnames, IDs, URLs, or secrets.
+    hostname = os.environ.get('HOSTNAME', '')
+    requested = os.environ.get('SBX_ENV', 'auto')
+    report['environment']['deployment'] = {
+        'requested': requested if requested in ('auto', 'local', 'cloud') else 'invalid',
+        'cloud_hostname_pattern': bool(re.fullmatch(r'sbx-[a-z0-9]{27}', hostname)),
+        'matching_cloud_id': bool(re.fullmatch(r'sbx-[a-z0-9]{27}', hostname) and
+                                  os.environ.get('SBX_SANDBOX_NAME') == 'sbx_' + hostname[4:]),
+    }
     report['python_modules'] = {name: importlib.util.find_spec(name) is not None for name in ('passlib', 'tomlkit')}
     if os.geteuid() == 0:
         report['sudo'] = {'status': 'root'}

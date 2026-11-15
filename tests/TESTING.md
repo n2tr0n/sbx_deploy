@@ -23,8 +23,10 @@ sbx_local_opencode_deploy.sh
 sbx_sandbox_validate.sh
 tests/
   test_auth_preservation.py
+  test_cloud_credentials.py
   test_config_ownership.py
   test_download_errors.py
+  test_environment_profiles.py
   test_opencode_discovery.py
   test_package_timezone.py
   test_sandbox_validator.py
@@ -37,6 +39,11 @@ does not copy the tests into the sandbox.
 
 ## What the tests check
 
+- `test_environment_profiles.py` checks explicit and automatic selection,
+  unknown environments, cloud URL privacy, saved profile ownership, moved
+  sandboxes, and wrapper and payload syntax. It runs no deployment operations.
+- `test_cloud_credentials.py` checks cloud startup OAuth, environment API keys,
+  custom providers, private diagnostics, and cloud recovery instructions.
 - `test_auth_preservation.py` checks saved authentication choices and reruns.
 - `test_config_ownership.py` checks fresh configs, custom settings, MCP headers,
   other MCP servers, unchanged reruns, and interrupted config updates.

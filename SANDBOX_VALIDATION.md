@@ -24,6 +24,10 @@ five-second limits. Network checks use fixed URLs, HEAD requests, and the curren
 proxy, with six-second request limits; allow about one minute. They send no login
 headers, follow no redirects, and download no bodies. Host proxy policy still
 applies. Proxy values and response headers stay out of reports.
+For cloud checks, export `SBX_ENV=cloud` first. Set `SBX_MCP_GATEWAY_URL` if
+the sandbox does not export `MCP_GATEWAY_URL`. Unknown or unsafe gateway URLs
+are not probed. Reports show variable presence and fixed environment categories,
+not URLs, cloud IDs, or credential values. See [cloud setup](HOST_SETUP_CLOUD.md).
 
 ## Interpret results
 

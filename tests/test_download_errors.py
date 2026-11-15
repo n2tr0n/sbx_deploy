@@ -25,7 +25,7 @@ class DownloadErrors(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
         self.environment = dict(os.environ, HOME=self.home.as_posix(), HOSTNAME=CLOUD_HOST, COLUMNS='80')
-        for name in ('SBX_NETWORK_SCOPE', 'SBX_SANDBOX_NAME', 'BASH_ENV'):
+        for name in ('SBX_ENV', 'SBX_NETWORK_SCOPE', 'SBX_SANDBOX_NAME', 'BASH_ENV'):
             self.environment.pop(name, None)
 
     def failure(self, host, *, status=6, service='vscode', columns='80', offset=False):
@@ -37,6 +37,7 @@ class DownloadErrors(unittest.TestCase):
                                         'The requested URL returned error: 403')
         log.write_bytes((old + message).encode())
         self.environment['COLUMNS'] = columns
+        self.environment['FIXTURE_ENVIRONMENT'] = self.environment.get('SBX_NETWORK_SCOPE', 'cloud' if self.environment['HOSTNAME'] == CLOUD_HOST else 'local')
         self.environment['FIXTURE_STATUS'] = str(status)
         self.environment['FIXTURE_SERVICE'] = service
         self.environment['FIXTURE_OFFSET'] = str(len(old.encode()))
@@ -46,6 +47,7 @@ exec 3>&1 4>&2
 log_file="$HOME/run.log"
 work_dir="$HOME/work"
 operation_offset=$FIXTURE_OFFSET
+sbx_environment=$FIXTURE_ENVIRONMENT
 stage='VS Code'
 operation='Downloading CLI'
 started_at=$SECONDS
@@ -128,6 +130,45 @@ download_failure 'CLI download' "$FIXTURE_STATUS" "$FIXTURE_SERVICE"
         self.assertNotIn('unsafe-command', output)
         self.assertIn('$sandboxName = Read-Host', output)
         self.assertIn('--sandbox $sandboxName', output)
+
+    def test_success_summary_uses_selected_environment(self):
+        for environment in ('local', 'cloud'):
+            work = self.home / 'summary-work'
+            work.mkdir()
+            setup = '''
+set -euo pipefail
+exec 3>&1 4>&2
+log_file="$HOME/run.log"
+work_dir="$HOME/summary-work"
+started_at=$SECONDS
+sbx_environment=''' + environment + '''
+sbx_sandbox_target=cloud-project
+sbx_child_shell=true
+finishing=false
+utf8=false
+green= amber= red= muted= reset=
+warning_count=0
+changed_count=0 unchanged_count=1 verified_count=0
+github_auth_status=verified openai_auth_status=verified webtop_status=
+declare -a issue_keys=() issue_titles=() issue_details=() issue_actions=()
+stop_spinner() { :; }
+drain_output() { :; }
+cleanup_installer() { :; }
+'''
+            result = subprocess.run([BASH, '--noprofile', '--norc'],
+                                    input=setup + REPORT + '\n' + FINISH + '\ntrap finish_installer EXIT\ntrue\n',
+                                    text=True, encoding='utf-8', capture_output=True,
+                                    env=self.environment, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('SETUP COMPLETE', result.stdout)
+            if environment == 'cloud':
+                self.assertIn('sbx --cloud mcp ls cloud-project', result.stdout)
+                self.assertNotIn('sbx daemon restart', result.stdout)
+                self.assertNotIn('sbx kit add', result.stdout)
+                self.assertNotIn('127.0.0.1', result.stdout)
+            else:
+                self.assertIn('sbx daemon restart', result.stdout)
+                self.assertIn('sbx mcp load context7 --sandbox cloud-project', result.stdout)
 
 
 if __name__ == '__main__':
