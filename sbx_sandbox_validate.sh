@@ -132,7 +132,7 @@ import sys
 # These requirements describe the current installer, not an upstream image contract.
 PACKAGES = '''ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
 unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr libaa-bin
-python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux tzdata cmatrix'''.split()
+python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux tzdata hostname cmatrix'''.split()
 LEGACY_OPENCODE = '.opencode/bin/opencode'
 GATEWAY = 'http://mcp-gateway.docker.internal/mcp'
 TOOLS = 'bash sudo flock timeout dpkg-query apt-get curl git python3 node npm tmux opencode codex docker code rsyslogd logrotate'.split()

@@ -130,7 +130,26 @@ and confirm it skips installs, downloads, configuration writes, and new backups.
 
 For automatic startup, save work and attach the startup kit before deployment.
 Kit attachment recreates the container and interrupts sessions. Skip attachment
-if `sbx inspect <sandbox-name>` already lists this kit.
+if `sbx inspect <sandbox-name>` already lists `vscode-tunnel`, including a local
+path. Choose one source: local or GitHub. Do not attach both.
+
+For the local source kit, run these commands in **Windows PowerShell**.
+Wait for deployment to finish before attachment.
+
+```powershell
+sbx kit inspect C:\repo\sbx_deploy\kits\vscode-tunnel --resolved --format yaml
+```
+
+```powershell
+sbx kit add <sandbox-name> C:\repo\sbx_deploy\kits\vscode-tunnel
+```
+
+These commands use the local kit. They do not need a published Git reference.
+Local kits must be allowed by `kit.allowLocalKits`. Online inspection can load
+the v3 source kit. Offline inspection can fail because no kit builder is configured.
+
+For the published kit, use the `main` branch. Do not attach it until inspection
+succeeds.
 
 Check the publisher allowlist in **Windows PowerShell**:
 
@@ -144,11 +163,11 @@ Preserve all existing entries.
 Inspect the v3 kit, then attach it only if inspection succeeds:
 
 ```powershell
-sbx kit inspect "git+https://github.com/n2tr0n/sbx_deploy.git#ref=v0.5a&dir=kits/vscode-tunnel"
+sbx kit inspect "git+https://github.com/n2tr0n/sbx_deploy.git#ref=main&dir=kits/vscode-tunnel"
 ```
 
 ```powershell
-sbx kit add <sandbox-name> "git+https://github.com/n2tr0n/sbx_deploy.git#ref=v0.5a&dir=kits/vscode-tunnel"
+sbx kit add <sandbox-name> "git+https://github.com/n2tr0n/sbx_deploy.git#ref=main&dir=kits/vscode-tunnel"
 ```
 
 Use user `agent`. For another user, add `--kit-arg user=<user-name>` to both
@@ -165,25 +184,25 @@ install **Remote - Tunnels**. Use the same GitHub account and select
 **Remote Tunnels: Connect to Tunnel**.
 
 Check the connection with `vscode_status`. Use `vscode_disable` to stop it and
-disable startup. After a host reboot, start the sandbox with
-`sbx start <sandbox-name>` in PowerShell.
+disable startup. After a host reboot, start the existing sandbox in PowerShell:
+
+```powershell
+sbx run --name <sandbox-name> --detach
+```
 
 ### Tunnel troubleshooting
 
-If kit inspection or attachment fails, keep the sandbox. For an OAuth policy
-conflict (409), keep the bindings unchanged. Run `vscode_tunnel` manually after
-each sandbox restart until the startup kit works.
-
-If browser forwarding is disabled, enable it in **Windows PowerShell**:
-
-```powershell
-sbx settings set browser.enabled true
-```
-
-If tunnel authorization expires, run `vscode_tunnel --login` in sandbox Bash.
-For connection failures, check required domains against
-[Microsoft's tunnel network requirements](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
-Add only missing network access. Do not add token bindings for tunnel domains.
+- **Duplicate kit:** Keep the attached kit. Do not add it again from another source.
+- **Disconnected:** Run `vscode_tunnel`, then `vscode_status` in sandbox Bash.
+- **Expired login:** Run `vscode_tunnel --login` in sandbox Bash.
+- **Stuck process:** Save work. In Windows PowerShell, run
+  `sbx stop <sandbox-name>`, then `sbx run --name <sandbox-name> --detach`.
+  Run `vscode_tunnel` in sandbox Bash.
+- **No sign-in page:** Run `sbx settings set browser.enabled true` in Windows PowerShell.
+- **OAuth conflict (409):** Keep the sandbox and bindings. Run `vscode_tunnel`
+  after each restart until attachment works.
+- **Network failure:** Check [required domains](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security#domains).
+  Allow only missing access. Do not add token bindings for tunnel domains.
 
 ## Optional Webtop desktop
 
