@@ -10,13 +10,6 @@ out of logs and shared output.
   and restart persistence still need cloud checks. See
   [HOST_SETUP_CLOUD.md](HOST_SETUP_CLOUD.md).
 
-- **tmux snapshot output:** tmux-resurrect works on the tested host, as confirmed
-  by the user. Local fix adds the `hostname` package. Snapshot path diagnostics
-  now count as a warning and skip seeding. The user confirmed that `hostname`
-  works and the path check prints no errors with tmux running. Sandbox checks
-  remain: warning counts, preserved saves, and an unchanged rerun with no
-  installs, network calls, writes, or new backups.
-
 - **VS Code startup kit:** Resolve attachment `409 Conflict` about an effective
   OAuth credential policy change. The kit declares no credentials; the cause
   remains unverified. Keep the sandbox and OAuth bindings. Use `vscode_tunnel`
