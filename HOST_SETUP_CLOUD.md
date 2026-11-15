@@ -103,8 +103,36 @@ the key or auth files. Check a model response in OpenCode and Codex. Record
 whether each response works and whether the sandbox started before the secret
 was stored. A model-list failure alone does not establish an inference failure.
 
-If GitHub also returns 401 and the host secret list has no GitHub entry, add the
-GitHub secret using section 2. It is separate from OpenAI authentication.
+### GitHub HTTP 401
+
+The helper tests GitHub account access with `gh api user`. `Host proxy` means
+it found a proxy placeholder. This label does not confirm a valid cloud secret.
+A 401 does not identify the cause. OpenAI access uses a separate credential.
+
+For a sandbox created with the CLI, check metadata in **Windows PowerShell**:
+
+```powershell
+sbx --cloud secret ls
+```
+
+Check the GitHub entry and its scope. A sandbox-scoped secret takes precedence
+over an account-scoped secret. A local secret or Windows GitHub login does not
+configure cloud access. If the cloud GitHub secret is missing:
+
+```powershell
+sbx --cloud secret set github
+```
+
+Enter a valid GitHub token at the prompt. If an entry exists, check its scope
+and token validity before replacing it. Do not share the token or auth files.
+For a sandbox created in the web UI, check its Docker Agentic Platform secrets.
+The CLI cloud store does not supply that interface.
+
+Repeat `check_credentials` in **sandbox Bash**. Docker requires secrets before
+sandbox launch. If access still fails, record whether the sandbox started before
+the secret was set. Keep the existing sandbox and saved logins. Test a disposable
+new sandbox after secret setup to check startup access. Do not reset the working
+sandbox or restart the local daemon to repair cloud access.
 
 ### OpenCode reports missing scope `api.responses.write`
 

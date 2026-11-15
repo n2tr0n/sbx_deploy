@@ -2160,7 +2160,8 @@ def check_github():
            f'HTTP {code[1]}' if code else 'account request failed')
     if not ok and code and code[1] == '401':
         if sbx_environment == 'cloud':
-            actions.append('GitHub 401: check sbx --cloud secret ls in host PowerShell. See HOST_SETUP_CLOUD.md.')
+            actions.append('GitHub 401: in host PowerShell, run sbx --cloud secret ls. Check the GitHub entry and its scope. If missing, run sbx --cloud secret set github.')
+            actions.append('For a sandbox created in the web UI, check its Docker Agentic Platform secrets instead. A proxy placeholder does not confirm a valid secret. See HOST_SETUP_CLOUD.md.')
         else:
             actions.append('GitHub 401: if host gh works, run sbx daemon restart in host PowerShell, then retry.')
 
