@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Paste this complete file into Bash in one local and one cloud sandbox.
-# Report detection clues. Do not install tools, write files, or use the network.
-# Print environment variable names and fixed categories. Never print their values.
+# Collect clues to compare local and cloud SBX sandboxes. Do not select a type.
+# Paste this complete file into sandbox Bash in one local and one cloud sandbox.
+# Label each report LOCAL or CLOUD before sharing. Leave SBX_ENV unchanged.
+# Install nothing, write no files, and make no network requests.
+# Print selected variable names and fixed categories, not raw variable values.
+# Do not read credential files or print tokens, sandbox IDs, or mount sources.
+# Use a subshell to keep strict mode and report variables out of the caller shell.
 (
 set -euo pipefail
-printf 'SBX detection report v1\n'
+printf 'SBX local/cloud sandbox type report v1\n'
+# Check the hostname pattern without printing the hostname.
 case ${HOSTNAME:-} in
     '') printf 'hostname: unset\n' ;;
     *)
@@ -15,6 +20,7 @@ case ${HOSTNAME:-} in
         fi ;;
 esac
 printf '\nExported variable names (no values):\n'
+# List relevant exported names. A name alone does not prove the sandbox type.
 while IFS= read -r sbx_report_name; do
     [[ $sbx_report_name =~ ^[a-zA-Z_][a-zA-Z0-9_]{0,79}$ ]] || continue
     case $sbx_report_name in
@@ -23,6 +29,7 @@ while IFS= read -r sbx_report_name; do
     esac
 done < <(compgen -e | LC_ALL=C sort)
 printf '\nCredential mode categories:\n'
+# Convert credential mode labels to fixed categories. Do not inspect credentials.
 for sbx_report_name in SBX_CRED_OPENAI_MODE SBX_CRED_GITHUB_MODE; do
     case ${!sbx_report_name-unset} in
         oauth) sbx_report_category=oauth ;;
@@ -34,12 +41,14 @@ for sbx_report_name in SBX_CRED_OPENAI_MODE SBX_CRED_GITHUB_MODE; do
     printf '  %s: %s\n' "$sbx_report_name" "$sbx_report_category"
 done
 printf '\nPath markers (no file contents):\n'
+# Check marker paths without reading their contents.
 for sbx_report_path in /.dockerenv /run/.containerenv /etc/sandbox-persistent.sh /run/ssh-agent.sock /sys/hypervisor/type /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name; do
     sbx_report_category=absent
     if [[ -e $sbx_report_path || -L $sbx_report_path ]]; then sbx_report_category=present; fi
     printf '  %s: %s\n' "$sbx_report_path" "$sbx_report_category"
 done
 printf '\nVirtual machine categories:\n'
+# Read machine labels and print only the matching category.
 for sbx_report_path in /sys/hypervisor/type /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name; do
     sbx_report_value=
     if [[ -r $sbx_report_path ]]; then IFS= read -r sbx_report_value < "$sbx_report_path" || :; fi
@@ -57,6 +66,7 @@ for sbx_report_path in /sys/hypervisor/type /sys/class/dmi/id/sys_vendor /sys/cl
     printf '  %s: %s\n' "$sbx_report_path" "$sbx_report_category"
 done
 printf '\nFilesystem types (no mount sources):\n'
+# Print filesystem types for fixed locations. Keep home paths out of the output.
 for sbx_report_path in / "$HOME" "$HOME/workspace"; do
     sbx_report_category=unavailable
     if [[ -d $sbx_report_path ]] && command -v stat >/dev/null 2>&1; then
