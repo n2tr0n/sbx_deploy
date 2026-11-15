@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Find OpenCode on PATH. Upgrade only the supported user-local installation.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
 # --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_TIMEZONE sets the new tzdata default (America/Toronto). Keep configured timezones.
+# Download DNS failures show host policy commands. The installer does not change host policy.
 # SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 {
 (
@@ -64,9 +67,12 @@ sbx_save_and_run() {
 #!/usr/bin/env bash
 # Target: local Docker Sandboxes (sbx) of type opencode.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
+# Find OpenCode on PATH. Upgrade only the supported user-local installation.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
 # --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
+# SBX_TIMEZONE sets the new tzdata default (America/Toronto). Keep configured timezones.
+# Download DNS failures show host policy commands. The installer does not change host policy.
 # SBX_VERBOSE=1 shows live output. Stop on errors; clean up after interruption.
 SBX_SAVED_HEADER
         printf '{\n(\nset -euo pipefail\nexec 6<&0\nsbx_script_args=("$@")\n'
@@ -84,15 +90,11 @@ SBX_SAVED_HEADER
 case $? in
     0)
         if [[ $- == *i* && ${BASH_SOURCE[0]:-} != "$0" ]]; then
-            case ${PATH-} in
-                "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
-                *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
-            esac
-            hash -r
-            if source /etc/bash.bashrc; then
-                :
+            # Load the managed files directly. A global rc can return early.
+            if source /usr/local/lib/sbx-deploy/path.bash; then
+                hash -r
             else
-                printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
+                printf '\nWARN Could not reload shell setup; run: source /usr/local/lib/sbx-deploy/path.bash\n' >&2
             fi
         fi
         ;;
@@ -167,7 +169,13 @@ oauth_provider=sbx-chatgpt
 oauth_base_url=https://chatgpt.com/backend-api/codex
 api_base_url=https://api.openai.com/v1
 mcp_gateway_url=http://mcp-gateway.docker.internal/mcp
-opencode_binary=/home/agent/.opencode/bin/opencode
+find_opencode() {
+    local binary
+    binary=$(type -P opencode || :)
+    # Keep PATH choices. Also support the previous user-local installation.
+    printf '%s\n' "${binary:-$HOME/.opencode/bin/opencode}"
+}
+opencode_binary=$(find_opencode)
 codex_install_url=https://chatgpt.com/codex/install.sh
 codex_device_url=https://auth.openai.com/codex/device
 download_seconds=60
@@ -175,6 +183,7 @@ install_seconds=300
 credential_seconds=30
 version_seconds=15
 kill_seconds=5
+package_timezone=${SBX_TIMEZONE:-America/Toronto}
 
 # Keep terminal presentation independent from captured command output.
 exec 3>&1 4>&2
@@ -241,7 +250,7 @@ done <<'SBX_BANNER'
   /  \   \____  \ /  /_/  <  \  V  /    .:: S B X   D E P L O Y ::.    /  \
   \  /  —————/  //  /_/   /  /  \  \                                   \  /
    \/  /_______//________/__/__/_\__\_________________________________  \/
-   /\  \__  Nitron's Deployment Script for SBX v0.4a               __/  /\
+   /\  \__  Nitron's Deployment Script for SBX v0.5.1a             __/  /\
  _/  \____\_______________________________________________________/____/  \_
  \_________________________________________________________________________/
 
@@ -312,6 +321,7 @@ stage_started=$SECONDS
 operation_offset=0
 changed_count=0 unchanged_count=0 verified_count=0 warning_count=0
 finishing=false
+concise_failure=false
 github_auth_status='not checked'
 openai_auth_status='not checked'
 declare -a issue_keys=() issue_titles=() issue_details=() issue_actions=()
@@ -548,6 +558,78 @@ die() {
     printf 'SBX Deploy: %s\n' "$1" >&2
     exit "$status"
 }
+download_failure() {
+    local label=$1 status=$2 service=$3 line failed_host= resources= host scope target actions prefix
+    local pattern='Could not resolve host: [^[:alnum:]]*([[:alnum:]][[:alnum:].-]*)'
+    local -a hosts=()
+    # Flush live output before reading the failed operation. Keep its full log.
+    drain_output
+    if (( status == 6 )); then
+        while IFS= read -r line || [[ -n $line ]]; do
+            if [[ $line =~ $pattern ]]; then failed_host=${BASH_REMATCH[1],,}; fi
+        done < <(tail -c "+$((operation_offset + 1))" -- "$log_file")
+        case $service:$failed_host in
+            codex:chatgpt.com|codex:releases.openai.com)
+                hosts=(chatgpt.com releases.openai.com) ;;
+            vscode:update.code.visualstudio.com|vscode:vscode.download.prss.microsoft.com)
+                hosts=(update.code.visualstudio.com vscode.download.prss.microsoft.com) ;;
+        esac
+    fi
+    # Suggest policy changes only for known download hosts, never arbitrary stderr.
+    if (( ${#hosts[@]} )); then
+        scope=${SBX_NETWORK_SCOPE:-auto}
+        if [[ $scope == auto ]]; then
+            scope=local
+            if [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ ]]; then scope=cloud; fi
+        fi
+        target=${SBX_SANDBOX_NAME:-}
+        if [[ -z $target ]]; then
+            if [[ $scope == cloud && ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ ]]; then
+                target="sbx_${HOSTNAME#sbx-}"
+            elif [[ $scope == local ]]; then
+                target=${HOSTNAME:-}
+            fi
+        fi
+        actions=$'Windows PowerShell - inspect policy:\n'
+        if [[ ! $target =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+            target='$sandboxName'
+            actions+=$'  $sandboxName = Read-Host "Sandbox name or ID"\n'
+        fi
+        for host in "${hosts[@]}"; do resources+="${resources:+,}$host:443"; done
+        case $scope in
+            cloud)
+                prefix='sbx --cloud'
+                actions+=$'  sbx --cloud policy ls\n'
+                actions+="  sbx --cloud policy ls $target"$'\n' ;;
+            local)
+                prefix=sbx
+                for host in "${hosts[@]}"; do
+                    actions+="  sbx policy check network $host:443 --sandbox $target"$'\n'
+                done ;;
+            *) prefix= ;;
+        esac
+        if [[ -n $prefix ]]; then
+            actions+=$'Only if access is missing and not intentionally denied:\n'
+            actions+="  $prefix policy allow network \"$resources\" --sandbox $target"$'\n'
+            if [[ $scope == cloud ]]; then
+                actions+=$'Keep intentional denies; cloud allow can replace a deny in the same scope.\n'
+            else
+                actions+=$'Keep intentional denies.\n'
+            fi
+            actions+=$'If access is already allowed, check DNS and proxy routing.\n'
+        else
+            actions+=$'Set SBX_NETWORK_SCOPE to local or cloud for policy command guidance.\n'
+        fi
+        actions+=$'Sandbox Bash - retry DNS:\n'
+        actions+="  getent ahosts $failed_host"$'\n'
+        actions+=$'After DNS resolves, rerun:\n  bash ~/sbx_local_opencode_deploy.sh'
+        concise_failure=true
+        record_issue "download-$service" 'Download access' \
+            'Check the required HTTPS hosts in policy. If they are allowed, check DNS and proxy routing.' "$actions"
+        die "Cannot resolve $failed_host (curl 6)." "$status"
+    fi
+    die "$label failed; see the log excerpt." "$status"
+}
 cleanup_installer() {
     if [[ -n $auth_cache_staged ]]; then
         rm -f -- "$auth_cache_staged" || warn 'Could not remove temporary credential-check cache.'
@@ -586,9 +668,13 @@ finish_installer() {
         summary_begin "$heading" "$red"
         summary_text "${stage:-Setup}: $reason"
         summary_end
-        while IFS= read -r line || [[ -n $line ]]; do
-            summary_text "$line" '' literal
-        done < "$work_dir/excerpt"
+        if ! "$concise_failure"; then
+            while IFS= read -r line || [[ -n $line ]]; do
+                # The failure reason is already shown above. Keep other diagnostics.
+                [[ -n $line && $line != 'SBX Deploy: '* ]] || continue
+                summary_text "$line" '' literal
+            done < "$work_dir/excerpt"
+        fi
     fi
     rm -rf -- "$work_dir" || warn 'Could not remove the installer temporary workspace.'
     if (( status == 0 )); then
@@ -669,8 +755,8 @@ finish_installer() {
         summary_text ''
         if "$sbx_child_shell" || [[ $- != *i* ]]; then
             summary_text 'Reload your calling shell, or open a new shell, before using helpers:'
-            summary_text 'export PATH="$HOME/.local/bin:$PATH"; hash -r' '' literal
-            summary_text 'source /etc/bash.bashrc' '' literal
+            summary_command 'source /usr/local/lib/sbx-deploy/path.bash'
+            summary_command 'hash -r'
         fi
         summary_command check_credentials 'Live authentication and credential sources'
         summary_command check_mcp 'Discover gateway servers and tools'
@@ -784,10 +870,27 @@ stage_begin 'Packages' 'Checking installed packages'
 package_installed() {
     [[ $(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null) == installed ]]
 }
+seed_package_timezone() {
+    # APT can install tzdata before Python is available. Use debconf directly.
+    # Keep existing timezone files, including symlinks and local overrides.
+    if exists /etc/timezone || exists /etc/localtime; then
+        return 0
+    fi
+    [[ $package_timezone =~ ^[A-Za-z_+-]+(/[A-Za-z0-9_+-]+)+$ ]] ||
+        die 'SBX_TIMEZONE must use an Area/City name, such as America/Toronto.'
+    command -v debconf-set-selections >/dev/null 2>&1 ||
+        die 'debconf-set-selections is required to configure tzdata without prompts.'
+    stage_operation "Setting new tzdata default: $package_timezone"
+    run_as_root debconf-set-selections <<SBX_TZDATA
+tzdata tzdata/Areas select ${package_timezone%%/*}
+tzdata tzdata/Zones/${package_timezone%%/*} select ${package_timezone#*/}
+SBX_TZDATA
+    package_timezone_seeded=true
+}
 required_packages=(
     ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
     unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr
-    libaa-bin python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux
+    libaa-bin python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux tzdata
 )
 missing_packages=()
 for package in "${required_packages[@]}"; do
@@ -811,18 +914,25 @@ if (( ${#missing_packages[@]} )) || "$missing_cmatrix"; then
         # Open the progress descriptor after sudo closes extra descriptors.
         # Use positional arguments to preserve path quoting.
         # Call directly so errexit stops on APT failure.
-        run_as_root sh -c '
+        run_as_root env DEBIAN_FRONTEND=noninteractive sh -c '
             exec 5> "$1"
             shift
             exec apt-get -o APT::Status-Fd=5 "$@"
-        ' sbx-apt "$apt_status_file" "$@" | tee -- "$apt_output_file"
+        ' sbx-apt "$apt_status_file" "$@" </dev/null | tee -- "$apt_output_file"
     }
+    package_timezone_seeded=false
+    seed_package_timezone
     run_apt 'Refreshing package lists' update
     if (( ${#missing_packages[@]} )); then
         run_apt "Installing ${#missing_packages[@]} missing packages" install -y "${missing_packages[@]}"
     fi
     if "$missing_cmatrix"; then
         run_apt 'Installing cmatrix' install -y --no-install-recommends cmatrix
+    fi
+    if "$package_timezone_seeded"; then
+        [[ -f /usr/share/zoneinfo/$package_timezone ]] &&
+            cmp -s -- /etc/localtime "/usr/share/zoneinfo/$package_timezone" ||
+            die "tzdata did not apply $package_timezone; check the package log before retrying."
     fi
     stage_done changed "Installed $package_count missing packages"
     apt_status_file= apt_output_file=
@@ -852,7 +962,7 @@ install_codex() {
             :
         else
             status=$?
-            die 'Codex installer download failed; check sandbox network/proxy access.' "$status"
+            download_failure 'Codex installer download' "$status" codex
         fi
         stage_operation 'Downloading/installing Codex'
         # Disable launch prompts. Keep pasted input away from the installer.
@@ -1131,7 +1241,7 @@ else
         :
     else
         status=$?
-        die 'VS Code CLI download failed; check sandbox network/proxy access.' "$status"
+        download_failure 'VS Code CLI download' "$status" vscode
     fi
     # Extract only the executable into the private workspace. Ignore archive paths.
     stage_operation 'Checking downloaded VS Code CLI'
@@ -2386,6 +2496,8 @@ queue_helper "$HOME/.local/lib/sbx-deploy/auth-vscode-browser-tty" vscode_auth_c
 
 # Interactive definitions live in one owned file; startup files hold loaders.
 {
+    printf '%s\n' '# Load definitions once per shell. Keep later user aliases and functions.' \
+        'if [[ ${_sbx_shell_pid:-} != "$BASHPID" ]]; then'
     printf 'sbx_opencode_binary=%q\nsbx_credential_seconds=%q\nsbx_kill_seconds=%q\n' \
         "$opencode_binary" "$credential_seconds" "$kill_seconds"
     cat <<'SBX_SHELL_SETTINGS'
@@ -2507,8 +2619,14 @@ case $- in
             fi
             return "$status"
         }
-        # Personal .bashrc defaults run after /etc/bash.bashrc. Set PS1 just
-        # before display, preserving existing command hooks and their status.
+        ;;
+esac
+_sbx_shell_pid=$BASHPID
+fi
+# User startup can replace PROMPT_COMMAND after the first load.
+# Register again without replacing user aliases, functions, or other hooks.
+case $- in
+    *i*)
         _sbx_register_prompt() {
             local command
             for command in "${PROMPT_COMMAND[@]}"; do
@@ -2530,6 +2648,7 @@ case $- in
             "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
             *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
         esac
+        source /usr/local/lib/sbx-deploy/shell.bash
         ;;
 esac
 SBX_PATH_SETTINGS
@@ -2592,8 +2711,13 @@ loaders = {
     'path': '# SBX Deploy: PATH loader\nsource /usr/local/lib/sbx-deploy/path.bash\n',
     'syslog': syslog_block,
 }
+user_loader = '# SBX Deploy: user shell loader\ncase $- in *i*) source /usr/local/lib/sbx-deploy/shell.bash ;; esac\n'
+loaders['user'] = loaders['path']
 updated = original
-for block in ([loaders[kind]] + (legacy if kind == 'global' else [path_block] if kind == 'path' else [])):
+blocks = [loaders[kind]] + (legacy if kind == 'global' else [path_block] if kind in ('path', 'user') else [])
+if kind == 'user':
+    blocks.append(user_loader)
+for block in blocks:
     # Duplicates are ambiguous, even if each copy looks familiar.
     if updated.count(block) > 1:
         sys.exit(f'Duplicate managed startup block: {source}; preserve/repair it before retrying.')
@@ -2603,7 +2727,10 @@ if '# SBX Deploy:' in updated or (kind == 'global' and re.search(
     sys.exit(f'Edited or partial managed startup block: {source}; preserve/repair it before retrying.')
 # Keep unrelated text byte-for-byte. A matching loader is already in its final
 # position; avoid removing/reappending it, which would accumulate blank lines.
-if loaders[kind] in original and updated == original.replace(loaders[kind], '', 1):
+if kind == 'user':
+    # Load definitions before user settings. Restore the prompt hook after them.
+    result = user_loader + updated + ('' if not updated or updated.endswith('\n') else '\n') + loaders[kind]
+elif loaders[kind] in original and updated == original.replace(loaders[kind], '', 1):
     result = original
 else:
     result = updated + ('' if not updated or updated.endswith('\n') else '\n') + loaders[kind]
@@ -2618,12 +2745,12 @@ stage_startup() {
 global_bashrc=/etc/bash.bashrc
 [[ -f $global_bashrc && -r $global_bashrc ]] || die "Cannot read: $global_bashrc"
 stage_startup "$global_bashrc" global
-stage_startup "$HOME/.bashrc" path
+stage_startup "$HOME/.bashrc" user
 login_file="$HOME/.profile"
 for candidate in "$HOME/.bash_profile" "$HOME/.bash_login"; do
     if [[ -f $candidate && -r $candidate ]]; then login_file=$candidate; break; fi
 done
-stage_startup "$login_file" path
+stage_startup "$login_file" user
 stage_startup /etc/sandbox-persistent.sh syslog
 for ((i=0; i<${#managed_targets[@]}; i++)); do
     managed_preflight "${managed_targets[i]}" "${managed_sources[i]}" "${managed_modes[i]}"
@@ -2647,6 +2774,13 @@ else
 fi
 
 stage_begin 'OpenCode' 'Checking upgrade'
+opencode_upgrade_supported() {
+    # The curl updater is supported only for the previous user-local layout.
+    # Do not replace image files, symlinks, or installations owned by another user.
+    [[ $opencode_binary == "$HOME/.opencode/bin/opencode" &&
+       ! -L $HOME/.opencode && ! -L $HOME/.opencode/bin && ! -L $opencode_binary &&
+       -O $opencode_binary && -w $opencode_binary && -w ${opencode_binary%/*} ]]
+}
 upgrade_opencode() (
     local state_file="$log_dir/opencode-upgrade.sha256" before after staged=
     trap 'if [[ -n $staged ]]; then rm -f -- "$staged"; fi' EXIT
@@ -2679,6 +2813,11 @@ upgrade_opencode() (
 )
 if ! exists "$opencode_binary"; then
     stage_done unchanged 'Not installed'
+elif [[ ! -f $opencode_binary || ! -x $opencode_binary ]]; then
+    die "OpenCode is not an executable regular file: $opencode_binary"
+elif ! opencode_upgrade_supported; then
+    printf 'OpenCode executable: %s\n' "$opencode_binary"
+    stage_done unchanged 'Using existing OpenCode; automatic upgrade skipped'
 else
     upgrade_opencode
     if [[ -e $work_dir/changed ]]; then
@@ -3403,15 +3542,11 @@ SBX_DEPLOY_PAYLOAD
 case $? in
     0)
         if [[ $- == *i* && ${BASH_SOURCE[0]:-} != "$0" ]]; then
-            case ${PATH-} in
-                "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
-                *) export PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
-            esac
-            hash -r
-            if source /etc/bash.bashrc; then
-                :
+            # Load the managed files directly. A global rc can return early.
+            if source /usr/local/lib/sbx-deploy/path.bash; then
+                hash -r
             else
-                printf '\nWARN Could not reload shell setup; run: source /etc/bash.bashrc\n' >&2
+                printf '\nWARN Could not reload shell setup; run: source /usr/local/lib/sbx-deploy/path.bash\n' >&2
             fi
         fi
         ;;

@@ -1,70 +1,49 @@
-# Sandbox compatibility report
+# Sandbox validation
 
-Copy the complete contents of `sbx_sandbox_validate.sh`. Paste them into
-**sandbox Bash** and press Enter. You can paste from any directory. The file
-does not need to exist in the sandbox first. Do not paste a command that refers
-to a missing file. Do not add flags after the closing brace.
+## Run
 
-Use the same user that runs the installer. The default check uses local system
-tools. If `python3` is absent from PATH, it collects a smaller Bash text report.
-The fallback checks OS details, tool paths, path access, core packages, and sudo.
-It does not install Python. Version and network probes are skipped in fallback mode.
-It does not install packages, change settings, or read credential files.
-It checks passwordless sudo with `sudo -n true`. System audit logs can record probes.
-It prints JSON to stdout and a short summary to stderr. It saves a private
-report at `~/sbx-sandbox-report.<random>.json` and shows the full path.
-The Bash fallback uses `.txt` instead of `.json`.
-It saves a runnable copy at `~/sbx_sandbox_validate.sh`. If a different file
-already exists there, it keeps that file and saves a separate copy. It shows
-the saved copy path. It has no prompts. Failed runs remove the partial report.
+Paste the complete `sbx_sandbox_validate.sh` into **sandbox Bash**, from any
+directory, as the installer user. Do not append flags to the paste.
 
-Each run saves a new report. No output redirection is needed.
-A default run normally takes a few seconds. Missing tools do not
-stop the remaining checks. Reports include paths and package versions. Review
-these details before sharing. Do not add reports to the repository.
+The tool saves a private report and runnable copy under HOME and prints their
+paths. It keeps any different existing copy. Review paths and versions before
+sharing reports; keep reports out of the repository. No output redirection is needed.
 
-To run version commands and network probes, use:
+Default checks install nothing, change no settings, and read no credential
+files. They test sudo with `sudo -n true`; system audit logs can record probes.
+Python 3 produces JSON. Without it, a smaller Bash text report is collected.
+
+For optional probes, use the printed rerun command or:
 
 ```bash
 bash ~/sbx_sandbox_validate.sh --versions --network
 ```
 
-Use the printed rerun command if the saved copy has a different name.
-Version commands can create caches through the tools they run. Each command
-has a five-second limit. Network probes use fixed URLs and the current proxy.
-Each request has a six-second limit. All network probes can take about one
-minute. They use HEAD requests. They do not send login headers, follow
-redirects, download response bodies, or run inference. The host proxy can
-still apply its credential policy. Proxy values and response headers stay
-out of the report.
+These probes require Python. Version commands can create tool caches and have
+five-second limits. Network checks use fixed URLs, HEAD requests, and the current
+proxy, with six-second request limits; allow about one minute. They send no login
+headers, follow no redirects, and download no bodies. Host proxy policy still
+applies. Proxy values and response headers stay out of reports.
 
-An HTTP status proves that an HTTP response arrived. A 401, 403, 404, or 405
-does not prove bad credentials or a failed service. Status `000` or a timeout
-needs a separate network check. These probes do not validate MCP tools.
+## Interpret results
 
-## Use the evidence
+- Exit 0 means collection completed, not that deployment passed. Exit 2 means
+  an error; 130 or 143 means interruption. Failed runs remove partial report files.
+- Missing deployment packages can be normal before installation.
+- HTTP 401/403/404/405 alone does not prove bad credentials or service failure.
+  Status 000 or a timeout needs a network check.
+- Shell checks return loader flags without printing or executing startup text.
+  Check live aliases and prompts after reconnect and in a new tmux pane.
+- The report cannot prove repository access, upgrade permissions, configuration
+  ownership, authentication, inference, or MCP operation. Preserve logins and overrides.
 
-1. Collect a report from the affected image before deployment.
-2. Record host details using [HOST_SETUP_WIN.md](HOST_SETUP_WIN.md#image-change-evidence).
-3. Compare the report with a working sandbox, if available. Compare facts,
-   not timestamps or the number of findings.
-4. Confirm each mismatch before changing the installer. Missing deployment
-   packages are expected on a fresh image. An unavailable hard-coded executable
-   path is a separate compatibility gap.
-5. Review and check the installer locally. Test it in a disposable sandbox.
-   Collect a second report after deployment. Then check an unchanged rerun,
-   preservation, interruption recovery, authentication, inference, and MCP tools.
+## Check deployment changes
 
-The report is an inventory, not a deployment approval. Exit 0 means collection
-completed. Findings remain in the JSON. Exit 2 means a usage or collection
-error. Exit 130 means Ctrl+C. Exit 143 means termination. An interrupted
-report can be incomplete.
-
-The package list and expected OpenCode path describe the current installer.
-Local tests check that these values stay aligned. The collector does not
-check remote package candidates or upgrade permissions. It does not parse
-user configuration or prove ownership. Keep saved logins and overrides.
-
-Use a known working image version for repeatable tests when the host supports
-it. Keep a separate disposable sandbox for new-image checks. Collect evidence
-before changing the main installer.
+1. Collect a report before deployment and compare with a working sandbox if
+   available. Compare facts, not timestamps or finding counts. Record
+   [host details](HOST_SETUP_WIN.md#image-change-evidence).
+2. Confirm each mismatch against the installer before changing behavior.
+   Run local syntax checks and [tests](tests/TESTING.md).
+3. Test in a disposable sandbox and collect an after-report. Complete the
+   remaining [sandbox checks](AGENTS.md#validation): fresh install, unchanged
+   rerun, upgrades and preservation, interruption recovery, and both harnesses.

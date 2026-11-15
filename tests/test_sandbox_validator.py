@@ -18,6 +18,18 @@ exec(compile(PAYLOAD, 'validator payload', 'exec'), validator.__dict__)
 
 
 class ValidatorTests(unittest.TestCase):
+    def test_startup_loader_check_returns_flags_without_file_content(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / '.bashrc'
+            path.write_bytes(b'OPENAI_API_KEY=PRIVATE-CREDENTIAL\n# SBX Deploy: PATH loader\nsource /usr/local/lib/sbx-deploy/path.bash\n')
+            report = validator.shell_startup(path)
+            self.assertFalse(report['user_shell_loader'])
+            self.assertTrue(report['path_loader'])
+            self.assertNotIn('PRIVATE-CREDENTIAL', json.dumps(report))
+            prefix = b'# SBX Deploy: user shell loader\ncase $- in *i*) source /usr/local/lib/sbx-deploy/shell.bash ;; esac\n'
+            path.write_bytes(prefix + path.read_bytes())
+            self.assertTrue(validator.shell_startup(path)['user_shell_loader'])
+
     def test_paste_without_python_saves_text_report(self):
         bash = Path('C:/Program Files/Git/bin/bash.exe')
         if not bash.is_file():
@@ -98,7 +110,8 @@ class ValidatorTests(unittest.TestCase):
         source = (ROOT / 'sbx_local_opencode_deploy.sh').read_text(encoding='utf-8')
         packages = re.search(r'^required_packages=\(\n(.*?)\n\)', source, re.M | re.S)[1].split()
         self.assertEqual(set(validator.PACKAGES), set(packages + ['cmatrix']))
-        self.assertIn('opencode_binary=' + validator.OPENCODE + '\n', source)
+        self.assertIn('$HOME/' + validator.LEGACY_OPENCODE, source)
+        self.assertIn('opencode_binary=$(find_opencode)', source)
         self.assertIn('mcp_gateway_url=' + validator.GATEWAY + '\n', source)
 
     def test_default_report_has_no_secrets_or_optional_probes(self):
@@ -116,7 +129,7 @@ class ValidatorTests(unittest.TestCase):
                 patch.object(validator.os, 'getegid', return_value=0, create=True), \
                 patch.object(validator, 'metadata', side_effect=metadata), \
                 patch.object(validator, 'packages', return_value={'status': 'unavailable', 'items': {}}), \
-                patch.object(validator.shutil, 'which', return_value=None), \
+                patch.object(validator.shutil, 'which', side_effect=lambda name: '/usr/local/bin/opencode' if name == 'opencode' else None), \
                 patch.object(validator.importlib.util, 'find_spec', return_value=None), \
                 patch.object(validator, 'network') as network, \
                 patch.object(validator, 'run') as run:
@@ -127,7 +140,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertNotIn(secret, encoded)
         self.assertTrue(report['environment']['present']['OPENAI_API_KEY'])
         self.assertEqual(report['environment']['credential_modes']['SBX_CRED_OPENAI_MODE'], 'other')
-        self.assertTrue(any(item['kind'] == 'compatibility' for item in report['findings']))
+        self.assertFalse(any(item['kind'] == 'compatibility' for item in report['findings']))
         self.assertEqual(report['tools']['opencode']['candidates'][0]['path'], '/usr/local/bin/opencode')
 
     def test_package_partial_results_and_failure(self):

@@ -2,7 +2,7 @@
 # Paste this complete file into sandbox Bash from any directory.
 # Save a runnable copy and a private report in HOME. Show the report path.
 # Use a Bash text report when Python 3 is absent. Otherwise, use JSON.
-# Do not install tools, edit configuration, read tokens, or prompt for input.
+# Do not install tools, edit configuration, read credential files, or prompt for input.
 # Optional probes: --versions runs tools; --network sends unauthenticated HEAD requests.
 # Paste the complete file into sandbox Bash, or run: bash sbx_sandbox_validate.sh
 {
@@ -132,17 +132,19 @@ import sys
 # These requirements describe the current installer, not an upstream image contract.
 PACKAGES = '''ansible strace ltrace plocate atop htop btop nmon nmap git net-tools
 unzip bind9-utils rsync curl lynx tcpdump vim whois sudo tmux mtr libaa-bin
-python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux cmatrix'''.split()
-OPENCODE = '/home/agent/.opencode/bin/opencode'
+python3 python3-passlib python3-tomlkit rsyslog logrotate procps util-linux tzdata cmatrix'''.split()
+LEGACY_OPENCODE = '.opencode/bin/opencode'
 GATEWAY = 'http://mcp-gateway.docker.internal/mcp'
 TOOLS = 'bash sudo flock timeout dpkg-query apt-get curl git python3 node npm tmux opencode codex docker code rsyslogd logrotate'.split()
 ENDPOINTS = {
     'github': 'https://api.github.com/',
     'opencode_download': 'https://opencode.ai/install',
     'codex_download': 'https://chatgpt.com/codex/install.sh',
+    'codex_releases': 'https://releases.openai.com/',
     'openai_oauth': 'https://auth.openai.com/',
     'openai_backend': 'https://chatgpt.com/backend-api/codex/models',
     'vscode_download': 'https://update.code.visualstudio.com/',
+    'vscode_cdn': 'https://vscode.download.prss.microsoft.com/',
     'webtop_registry': 'https://lscr.io/v2/',
     'mcp_gateway': GATEWAY,
 }
@@ -188,10 +190,31 @@ def metadata(path):
     return result
 
 
+def shell_startup(path):
+    """Return loader flags, never startup text. Do not execute the file."""
+    if metadata(path)['kind'] != 'file':
+        return {'status': 'unavailable'}
+    try:
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+        with os.fdopen(os.open(path, flags), 'rb') as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return {'status': 'unavailable'}
+            content = handle.read(262145)
+        if len(content) > 262144:
+            return {'status': 'too large'}
+    except OSError:
+        return {'status': 'unavailable'}
+    text = content.decode('utf-8', errors='replace')
+    shell_loader = '# SBX Deploy: user shell loader\ncase $- in *i*) source /usr/local/lib/sbx-deploy/shell.bash ;; esac\n'
+    path_loader = '# SBX Deploy: PATH loader\nsource /usr/local/lib/sbx-deploy/path.bash\n'
+    return {'status': 'checked', 'user_shell_loader': text.startswith(shell_loader),
+            'path_loader': path_loader in text}
+
+
 def candidates(name, search_path, home):
     paths = [Path(directory) / name for directory in search_path.split(os.pathsep) if directory]
     if name == 'opencode':
-        paths.extend([Path(OPENCODE), home / '.opencode/bin/opencode', Path('/usr/local/bin/opencode')])
+        paths.extend([home / LEGACY_OPENCODE, Path('/usr/local/bin/opencode')])
     if name == 'codex':
         paths.append(home / '.local/bin/codex')
     found = []
@@ -241,7 +264,7 @@ def collect(args):
     data = Path(os.environ.get('XDG_DATA_HOME', str(home / '.local/share')))
     state = Path(os.environ.get('XDG_STATE_HOME', str(home / '.local/state')))
     codex = Path(os.environ.get('CODEX_HOME', str(home / '.codex')))
-    report = {'schema_version': 1, 'collected_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    report = {'schema_version': 2, 'collected_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'scope': 'Local facts only. No authentication or inference checks.',
               'system': {'os': platform.system(), 'architecture': platform.machine(),
                          'kernel': platform.release(), 'python': platform.python_version(),
@@ -254,11 +277,14 @@ def collect(args):
         report['system']['distribution'] = {'status': 'unavailable'}
     report['tools'] = {name: {'selected': shutil.which(name), 'candidates': candidates(name, search_path, home)} for name in TOOLS}
     report['packages'] = packages()
-    paths = {'expected_opencode': Path(OPENCODE), 'opencode_json': config / 'opencode/opencode.json',
+    selected_opencode = report['tools']['opencode']['selected'] or str(home / LEGACY_OPENCODE)
+    paths = {'selected_opencode': Path(selected_opencode), 'opencode_json': config / 'opencode/opencode.json',
              'opencode_jsonc': config / 'opencode/opencode.jsonc', 'opencode_auth': data / 'opencode/auth.json',
              'codex_config': codex / 'config.toml', 'codex_auth': codex / 'auth.json',
              'ownership': state / 'sbx-deploy/config-ownership',
              'global_bashrc': Path('/etc/bash.bashrc'), 'user_bashrc': home / '.bashrc',
+             'managed_shell': Path('/usr/local/lib/sbx-deploy/shell.bash'),
+             'managed_path': Path('/usr/local/lib/sbx-deploy/path.bash'),
              'profile': home / '.profile', 'persistent_hook': Path('/etc/sandbox-persistent.sh'),
              'tmux_config': Path('/etc/tmux.conf'), 'tpm': home / '.tmux/plugins/tpm/tpm',
              'resurrect': home / '.tmux/plugins/tmux-resurrect/resurrect.tmux',
@@ -266,6 +292,7 @@ def collect(args):
              'logrotate_config': Path('/etc/logrotate.conf'), 'rsyslog_rotation': Path('/etc/logrotate.d/rsyslog'),
              'usr_local_bin': Path('/usr/local/bin'), 'run': Path('/run'), 'tmp': Path('/tmp')}
     report['paths'] = {name: metadata(path) for name, path in paths.items()}
+    report['shell_startup'] = shell_startup(home / '.bashrc')
     report['environment'] = {'present': {name: bool(os.environ.get(name)) for name in (
         'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'BASH_ENV',
@@ -297,9 +324,9 @@ def collect(args):
         finding('blocker', 'Run this tool inside sandbox Linux.')
     if report['sudo']['status'] not in ('root', 'available'):
         finding('blocker', 'Passwordless sudo is unavailable. Installer elevation will fail.')
-    expected = report['paths']['expected_opencode']
+    expected = report['paths']['selected_opencode']
     if expected['kind'] not in ('file', 'symlink') or not expected.get('executable'):
-        finding('compatibility', 'Installer OpenCode path is unavailable. Compare discovered candidates before repair.')
+        finding('compatibility', 'No usable OpenCode executable was selected. Compare discovered candidates before repair.')
     for name in ('bash', 'flock', 'timeout', 'dpkg-query', 'apt-get'):
         if not report['tools'][name]['selected']:
             finding('blocker', name + ' is absent from PATH.')
@@ -312,10 +339,16 @@ def collect(args):
     for name in ('opencode_json', 'opencode_jsonc', 'codex_config'):
         if report['paths'][name]['kind'] in ('symlink', 'directory', 'other', 'unavailable'):
             finding('ownership', name + ' needs review before installer configuration changes.')
+    startup = report['shell_startup']
+    if startup['status'] != 'checked' or not startup.get('user_shell_loader') or not startup.get('path_loader'):
+        finding('shell_setup', 'User Bash loaders are absent or unverified. Reconnect can miss aliases or the prompt hook.')
+    if any(report['paths'][name]['kind'] != 'file' for name in ('managed_shell', 'managed_path')):
+        finding('shell_setup', 'Managed shell files are absent or unavailable.')
     report['findings'] = findings
     report['unverified'] = ['Package repository availability and upgrade permissions.',
                             'Saved logins, host token substitution, model inference, and MCP tools.',
                             'Host image identity, kit composition, network policy, and port bindings.',
+                            'Live aliases and prompt hooks after reconnect, login Bash, and a new tmux pane.',
                             'Installer preservation, unchanged rerun, and interruption recovery.']
     return report
 
