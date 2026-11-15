@@ -10,11 +10,6 @@ out of logs and shared output.
   and restart persistence still need cloud checks. See
   [HOST_SETUP_CLOUD.md](HOST_SETUP_CLOUD.md).
 
-- **First-paste shell activation:** Check that PATH, aliases, and the prompt
-  activate immediately after a fresh cloud paste with the direct-helper fix.
-  Reconnect already works. Check local activation, user overrides, and a new
-  tmux pane. A child-script run must print the parent-terminal refresh command.
-
 - **Remaining deployment checks:** Complete the remaining
   [sandbox checks](AGENTS.md#validation): Toronto timezone on fresh setup;
   preservation of an existing timezone, user edits, and logins; user-local
