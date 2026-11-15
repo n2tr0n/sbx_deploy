@@ -15,9 +15,6 @@ out of logs and shared output.
   [tunnel setup](HOST_SETUP_WIN.md#optional-vs-code-tunnel) and
   [recovery](HOST_SETUP_WIN.md#tunnel-troubleshooting).
 
-- **Codex broken pipe (unreproduced):** Investigate if selection or copying triggers it.
-  Record steps, versions, and relevant output.
-
 # Feature roadmap
 
 - Add a module system.
