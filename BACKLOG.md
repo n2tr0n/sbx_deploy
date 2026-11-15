@@ -3,6 +3,13 @@
 Check reports against current code before changing behavior. Keep credentials
 out of logs and shared output.
 
+- Validate masked key entry in `sbx_cloud_host_setup.ps1` on a Windows
+  terminal. GitHub tokens and OpenAI API keys must show `*` during input,
+  then a save status. Check paste, empty input, cancellation, and a failed
+  save. Keep values out of command arguments, receipts, logs, and output.
+  PowerShell 5.1 syntax and mocked input, privacy, empty-input, and failed-save
+  checks pass. Confirm terminal masking and live cloud standard input support.
+
 - BLOCKED: Complete the guided Windows setup for cloud sandboxes in
   `sbx_cloud_host_setup.ps1`, linked from `HOST_SETUP_CLOUD.md`.
   Required MCP setup cannot pass live validation.

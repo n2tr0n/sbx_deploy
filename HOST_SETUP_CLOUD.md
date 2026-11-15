@@ -23,7 +23,10 @@ action. Compute is billable while the sandbox runs.
 
 Review the displayed secret metadata. Choose `keep` only when the required
 credential exists at the stated scope. Choose `add` only when it is missing.
-Enter tokens only at the SBX secret prompt. The script never uses `--force`.
+Paste keys and tokens at the script's masked prompt. PowerShell shows `*`
+characters and then `Input received. Saving secret...`. The value goes to
+SBX through standard input. It is not put in command arguments or files.
+OpenAI OAuth still uses browser sign-in. The script never uses `--force`.
 Keep intentional denies. Initial allow rules do not override account denies.
 The script does not change account policy or edit an existing sandbox policy.
 

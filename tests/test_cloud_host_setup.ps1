@@ -18,13 +18,22 @@ $script:failCommand = ''
 $script:createThenFail = $false
 $script:mcpNoGateway = $false
 $script:mcpStatusError = ''
+$script:secretInputLengths = [Collections.Generic.List[int]]::new()
+$script:maskedPromptCount = 0
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
-function Read-Host([string]$Prompt) {
+function Read-Host([string]$Prompt, [switch]$AsSecureString) {
     if (-not $script:answers.Count) { throw "No test answer for: $Prompt" }
-    return $script:answers.Dequeue()
+    $answer = $script:answers.Dequeue()
+    if ($AsSecureString) {
+        $script:maskedPromptCount++
+        $secureAnswer = [Security.SecureString]::new()
+        foreach ($character in $answer.ToCharArray()) { $secureAnswer.AppendChar($character) }
+        return $secureAnswer
+    }
+    return $answer
 }
 function Get-Command {
     # The guide requires an installed CLI. Supply that prerequisite for tests.
@@ -33,6 +42,11 @@ function Get-Command {
 function sbx {
     $command = @($args) -join ' '
     $script:calls.Add($command)
+    $inputValues = @($input)
+    if ($command -match ' secret set (github|openai) --sandbox ') {
+        Assert-True ($inputValues.Count -eq 1) 'A key was not passed through standard input.'
+        $script:secretInputLengths.Add($inputValues[0].Length)
+    }
     $global:LASTEXITCODE = 0
     if ($command -like '* create *' -and $script:createThenFail) {
         $script:existingNames = @('cloud-test')
@@ -60,7 +74,8 @@ function Run-Setup([string[]]$Replies, [string]$ExpectedError = '') {
     $script:answers.Clear()
     foreach ($reply in $Replies) { $script:answers.Enqueue($reply) }
     $caught = ''
-    try { & $setupBlock | Out-Null } catch { $caught = $_.Exception.Message }
+    $script:lastOutput = [Collections.Generic.List[string]]::new()
+    try { & $setupBlock *>&1 | ForEach-Object { $script:lastOutput.Add($_.ToString()) } } catch { $caught = $_.Exception.Message }
     if ($ExpectedError) { Assert-True ($caught -like $ExpectedError) "Expected '$ExpectedError', got '$caught'." } else { Assert-True (-not $caught) "Unexpected error: $caught" }
     Assert-True ($script:answers.Count -eq 0) 'The setup skipped a required test answer.'
 }
@@ -73,14 +88,20 @@ function Start-Case([string]$Name) {
     $script:createThenFail = $false
     $script:mcpNoGateway = $false
     $script:mcpStatusError = ''
+    $script:secretInputLengths.Clear()
+    $script:maskedPromptCount = 0
 }
 function Receipt-Path { return (Join-Path $env:LOCALAPPDATA 'sbx-deploy\cloud\cloud-test.json') }
 try {
     Start-Case 'fresh'
-    Run-Setup @('cloud-test', 'oauth', 'add', 'ready', 'ready', '', 'create', 'keep', 'ready')
+    Run-Setup @('cloud-test', 'oauth', 'add', 'test-only-github-secret', 'ready', 'ready', '', 'create', 'keep', 'ready')
     $receiptPath = Receipt-Path
     $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
     Assert-True $receipt.complete 'Fresh setup did not complete.'
+    Assert-True ($script:maskedPromptCount -eq 1 -and $script:secretInputLengths[0] -eq 'test-only-github-secret'.Length) 'GitHub entry was not masked and sent through stdin.'
+    Assert-True (($script:calls -join "`n") -notmatch 'test-only-github-secret') 'The GitHub value leaked into command arguments.'
+    Assert-True (($script:lastOutput -join "`n") -notmatch 'test-only-github-secret') 'The GitHub value leaked into output.'
+    Assert-True ([IO.File]::ReadAllText($receiptPath) -notmatch 'test-only-github-secret') 'The GitHub value leaked into the receipt.'
     Assert-True (@($script:calls | Where-Object { $_ -like '* secret set openai --oauth' }).Count -eq 1) 'OpenAI OAuth was not set once.'
     Assert-True (@($script:calls | Where-Object { $_ -like '* secret set github --sandbox cloud-test' }).Count -eq 1) 'GitHub scope is wrong.'
     Assert-True (@($script:calls | Where-Object { $_ -like '* create *--allow-network chatgpt.com:443*opencode' }).Count -eq 1) 'Initial network exceptions are missing.'
@@ -118,6 +139,26 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Receipt-Path))) 'Failed secret setup saved a success receipt.'
     Assert-True (@($script:calls | Where-Object { $_ -match ' create |secret set github' }).Count -eq 0) 'Setup continued after a credential failure.'
     Write-Host 'PASS: credential failure stops setup'
+
+    Start-Case 'masked-openai-key'
+    Run-Setup @('cloud-test', 'key', 'test-only-openai-key', 'keep', 'ready', 'ready', '', 'create', 'keep', 'ready')
+    Assert-True ($script:maskedPromptCount -eq 1 -and $script:secretInputLengths[0] -eq 'test-only-openai-key'.Length) 'OpenAI key entry was not masked and sent through stdin.'
+    Assert-True (($script:calls -join "`n") -notmatch 'test-only-openai-key') 'The OpenAI key leaked into arguments.'
+    Assert-True (($script:lastOutput -join "`n") -notmatch 'test-only-openai-key') 'The OpenAI key leaked into output.'
+    Write-Host 'PASS: masked OpenAI API key entry'
+
+    Start-Case 'empty-secret'
+    Run-Setup @('cloud-test', 'keep', 'add', '') '*Secret input is empty*'
+    Assert-True ($script:secretInputLengths.Count -eq 0) 'Empty input was sent to SBX.'
+    Assert-True (-not (Test-Path -LiteralPath (Receipt-Path))) 'Empty input saved a receipt.'
+    Write-Host 'PASS: empty secret is rejected before saving'
+
+    Start-Case 'masked-save-failure'
+    $script:failCommand = '* secret set github *'
+    Run-Setup @('cloud-test', 'keep', 'add', 'test-only-failed-secret') '*exit 9*'
+    Assert-True (($script:lastOutput -join "`n") -notmatch 'test-only-failed-secret|Secret saved\.') 'Failed save leaked the value or reported success.'
+    Assert-True (-not (Test-Path -LiteralPath (Receipt-Path))) 'Failed key save wrote a receipt.'
+    Write-Host 'PASS: failed masked save stops without reporting success'
 
     Start-Case 'create-interruption'
     $script:createThenFail = $true

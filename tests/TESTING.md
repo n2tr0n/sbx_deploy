@@ -25,6 +25,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_cloud_host_setup.
 This test parses the external script and runs it with fake CLI calls and
 prompt answers. It checks fresh setup, unchanged reruns, explicit rechecks,
 existing sandboxes, interrupted creation, MCP failures, and receipt recovery.
+It checks masked GitHub and OpenAI key prompts, standard input delivery,
+empty input, and failed saves. Synthetic keys must not appear in arguments,
+output, or receipts. Terminal masking and live cloud saves still need checks.
 It checks default and custom `--static-mcp` names at creation. Missing MCP
 gateways stop setup without loading or recreating the sandbox. Unrelated MCP
 status errors also stop setup. Live creation with a gateway remains untested.

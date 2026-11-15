@@ -23,9 +23,32 @@
                 Write-Host ('Enter ' + ($Choices -join ', ') + ', or stop.')
             }
         }
-        function Invoke-Cloud([string[]]$CliArgs) {
-            & sbx --debug=false --cloud @CliArgs
+        function Invoke-Cloud([string[]]$CliArgs, [Security.SecureString]$Secret) {
+            if ($null -eq $Secret) {
+                & sbx --debug=false --cloud @CliArgs
+            } else {
+                $secretPointer = [IntPtr]::Zero
+                try {
+                    $secretPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+                    # Send the value through stdin. Never put it in arguments or files.
+                    [Runtime.InteropServices.Marshal]::PtrToStringBSTR($secretPointer) | & sbx --debug=false --cloud @CliArgs
+                } finally {
+                    if ($secretPointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($secretPointer) }
+                }
+            }
             if ($LASTEXITCODE -ne 0) { throw "SBX failed (exit $LASTEXITCODE). Read the error above. Fix the cause and rerun this script. Receipt: $statePath" }
+        }
+        function Set-CloudSecret([string]$Service) {
+            Write-Host "Paste the $Service key or token. Input is masked with *. Press Enter when done."
+            $secret = Read-Host -Prompt "$Service secret" -AsSecureString
+            try {
+                if ($secret.Length -eq 0) { throw 'Secret input is empty. Nothing was saved.' }
+                Write-Host 'Input received. Saving secret...'
+                Invoke-Cloud @('secret', 'set', $Service, '--sandbox', $sandboxName) -Secret $secret
+                Write-Host 'Secret saved.'
+            } finally {
+                $secret.Dispose()
+            }
         }
         function Save-Setup {
             $json = $state | ConvertTo-Json -Depth 4
@@ -93,11 +116,11 @@
             $openai = Ask-Choice 'OpenAI: enter keep, oauth to add missing account OAuth, or key to add a missing sandbox API key' @('keep', 'oauth', 'key')
             if ($state.created -and $openai -ne 'keep') { throw 'This sandbox already started. Keep it. Set the missing secret with the manual steps below, then test a new named sandbox. Do not replace startup credentials here.' }
             if ($openai -eq 'oauth') { Invoke-Cloud @('secret', 'set', 'openai', '--oauth') }
-            if ($openai -eq 'key') { Invoke-Cloud @('secret', 'set', 'openai', '--sandbox', $sandboxName) }
+            if ($openai -eq 'key') { Set-CloudSecret 'openai' }
             Write-Host 'GitHub: prefer a token scoped to this sandbox. keep can also use an existing account default.'
             $github = Ask-Choice 'GitHub: enter keep for an existing usable secret, or add for a missing sandbox token' @('keep', 'add')
             if ($state.created -and $github -eq 'add') { throw 'This sandbox already started. Keep it. Prepare the missing GitHub secret with the manual steps below, then test a new named sandbox.' }
-            if ($github -eq 'add') { Invoke-Cloud @('secret', 'set', 'github', '--sandbox', $sandboxName) }
+            if ($github -eq 'add') { Set-CloudSecret 'github' }
             Invoke-Cloud @('secret', 'ls')
             Ask-Choice 'Check secret names and scopes above. Enter ready only when OpenAI and GitHub are configured' @('ready') | Out-Null
             Write-Host '[3/5] Reviewing network access'
