@@ -48,6 +48,9 @@ does not copy the tests into the sandbox.
 - `test_cloud_credentials.py` checks cloud startup OAuth, environment API keys,
   custom providers, private diagnostics, and cloud recovery instructions.
 - `test_auth_preservation.py` checks saved authentication choices and reruns.
+  It checks cloud OAuth imports without a bridge, fixed expiry, credential ID
+  conflicts, and the local bridge requirement. It checks cloud service restart
+  receipts, unchanged runs, failed restart recovery, and skipped imports.
 - `test_config_ownership.py` checks fresh configs, custom settings, MCP headers,
   other MCP servers, unchanged reruns, and interrupted config updates.
 - `test_download_errors.py` checks local and cloud recovery commands, known

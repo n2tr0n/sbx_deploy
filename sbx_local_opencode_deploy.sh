@@ -3,6 +3,8 @@
 # One editable file. Keep shared setup and environment profiles together.
 # After the logo, confirm local or cloud. Press Enter to keep the detected default.
 # Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
+# Configure cloud OpenCode OAuth with shared proxy placeholders. Keep saved logins.
+# Restart cloud OpenCode once after OAuth setup. Retry if restart was interrupted.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
@@ -44,7 +46,7 @@ sbx_save_and_run() {
     sbx_cloud_profile() {
         sbx_host_command='sbx --cloud'
         sbx_host_doc=HOST_SETUP_CLOUD.md
-        # Keep cloud startup credentials. Do not import the local Docker bridge.
+        # Cloud has no local Docker bridge. Use shared OAuth placeholders instead.
         sbx_import_oauth_bridge=false
         sbx_webtop_supported=false
         mcp_gateway_url=${SBX_MCP_GATEWAY_URL:-${MCP_GATEWAY_URL:-}}
@@ -3121,27 +3123,39 @@ case ${SBX_CRED_OPENAI_MODE:-none} in
     *) : ;; # The credential stage reports this once, with recovery actions.
 esac
 # GitHub mode can lag host updates. Check live access before warning.
-if "$host_oauth" && "$sbx_import_oauth_bridge" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
-    # Import only the kit's masked bridge record. Keep exported credentials in memory.
+if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
+    # Local mode verifies the kit bridge. Cloud uses the shared proxy placeholders.
+    # Both require the advertised OAuth mode. Keep exported credentials in memory.
     # Never put real local tokens in logs, temporary files, or backups.
     # Use the kit's lock to prevent concurrent startup imports.
-    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" <<'SBX_PROXY_OAUTH'
+    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" "$sbx_environment" "$log_dir/opencode-oauth-service.sha256" <<'SBX_PROXY_OAUTH'
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tempfile
 
 binary, access, refresh, changed = sys.argv[1:5]
-credential_seconds, kill_seconds = map(int, sys.argv[5:])
+credential_seconds, kill_seconds = map(int, sys.argv[5:7])
+environment = sys.argv[7]
+service_receipt = Path(sys.argv[8])
+if environment not in ('local', 'cloud'):
+    sys.exit('Unknown OAuth environment; credentials left unchanged.')
 data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
 if not data_home.is_absolute():
     sys.exit('OpenCode data directory must be absolute.')
 directory = data_home / 'opencode'
 source = directory / 'auth.json'
-if source.is_symlink() or not source.is_file():
+if environment == 'local' and (source.is_symlink() or not source.is_file()):
     sys.exit('Missing regular OpenCode OAuth bridge file; restart the sandbox after authorizing host OAuth.')
+if environment == 'cloud':
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        sys.exit('Unsafe OpenCode data directory; preserve it and repair its path before retrying.')
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
 lock_path = directory / '.credentials-sync.lock'
 try:
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
@@ -3164,17 +3178,22 @@ with os.fdopen(lock_fd, 'w') as lock:
     if result.returncode:
         print('Credential synchronization lock timed out; retry after the other import finishes.', file=sys.stderr)
         sys.exit(result.returncode)
-    try:
-        bridge = json.loads(source.read_text())
-        record = bridge['openai']
-        if (record['type'] != 'oauth' or record['access'] != access
-                or record['refresh'] != refresh):
-            raise ValueError()
-        expires = float(record['expires'])
-        if not math.isfinite(expires) or expires < 0 or not expires.is_integer():
-            raise ValueError()
-    except (OSError, ValueError, KeyError, TypeError, OverflowError):
-        sys.exit('Expected Docker OAuth placeholders and a valid expiry; local credentials left unchanged.')
+    if environment == 'local':
+        try:
+            bridge = json.loads(source.read_text())
+            record = bridge['openai']
+            if (record['type'] != 'oauth' or record['access'] != access
+                    or record['refresh'] != refresh):
+                raise ValueError()
+            expires = float(record['expires'])
+            if not math.isfinite(expires) or expires < 0 or not expires.is_integer():
+                raise ValueError()
+        except (OSError, ValueError, KeyError, TypeError, OverflowError):
+            sys.exit('Expected Docker OAuth placeholders and a valid expiry; local credentials left unchanged.')
+    else:
+        # Fixed expiry: the cloud proxy refreshes real tokens. Do not trigger CLI refresh.
+        # Keep reruns identical. Never create a bridge file or copy startup credentials.
+        expires = 4102444800000  # 2100-01-01, milliseconds.
     value = dict(type='oauth', methodID='chatgpt-browser', access=access,
                  refresh=refresh, expires=int(expires))
     wanted = dict(id='sbx-openai', integrationID='openai', label='Sandbox OpenAI',
@@ -3200,13 +3219,57 @@ with os.fdopen(lock_fd, 'w') as lock:
                    and item.get('id') != wanted['id'] and item.get('active') is True
                    for item in existing)):
         sys.exit(0)
+    receipt = None
+    if environment == 'cloud':
+        # Import skips existing IDs. Never claim that a different value was updated.
+        if current and current.get('value') != value:
+            sys.exit('Managed cloud OpenCode OAuth entry differs; preserve it and review it before retrying.')
+        receipt = 'sbx-opencode-oauth-service-v1\n' + hashlib.sha256(
+            json.dumps(value, sort_keys=True).encode()).hexdigest() + '\n'
+        if service_receipt.is_symlink() or (service_receipt.exists() and not service_receipt.is_file()):
+            sys.exit('Unsafe OpenCode service receipt; preserve it and repair its path before retrying.')
+        if service_receipt.exists():
+            saved = service_receipt.read_text()
+            if not re.fullmatch(r'sbx-opencode-oauth-service-v1\n[0-9a-f]{64}\n', saved):
+                sys.exit('Unknown OpenCode service receipt; preserve it and review it before retrying.')
+        else:
+            saved = None
     if not current or current.get('value') != value:
         run('import', payload=json.dumps([wanted]))
+        Path(changed).touch()
+        if environment == 'cloud':
+            # Verify persistence before restarting or recording completion.
+            imported = json.loads(run('export'))
+            if not isinstance(imported, list) or not any(
+                    item.get('id') == wanted['id'] and item.get('integrationID') == 'openai'
+                    and item.get('active') is True and item.get('value') == value
+                    for item in imported if isinstance(item, dict)):
+                sys.exit('OpenCode OAuth import was not applied; credentials preserved. Review the inventory before retrying.')
+            saved = None
+    if receipt is not None and saved != receipt:
+        # Standalone auth changes do not refresh a running background service.
+        # Record success only after restart. A failure or interruption must retry.
+        print('Restarting cloud OpenCode service to load OAuth routing.', flush=True)
+        result = subprocess.run(['timeout', f'--kill-after={kill_seconds}s', f'{credential_seconds}s',
+                                 binary, 'service', 'restart'], capture_output=True)
+        if result.returncode:
+            print('OpenCode service restart failed; rerun deployment. Output withheld to protect credentials.', file=sys.stderr)
+            sys.exit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', dir=service_receipt.parent,
+                                             prefix='.opencode-oauth-service-', delete=False) as handle:
+                staged = Path(handle.name)
+                handle.write(receipt)
+            os.replace(staged, service_receipt)
+        finally:
+            if staged is not None and staged.exists():
+                staged.unlink()
         Path(changed).touch()
 SBX_PROXY_OAUTH
 fi
 if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Imported masked OpenCode OAuth from host bridge'
+    stage_done changed 'Configured OpenCode host OAuth placeholders'
 elif "$host_oauth"; then
     stage_done unchanged 'Saved authentication selection preserved'
 else

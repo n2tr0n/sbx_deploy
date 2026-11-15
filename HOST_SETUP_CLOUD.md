@@ -68,10 +68,18 @@ or shared output. Cloud secrets do not support the local `--command` resolver.
 Configure credentials before creating a new sandbox. For an existing sandbox,
 check that its startup credentials are available before deployment.
 
-The installer preserves cloud startup credentials and saved logins. It does
-not import the local Docker OpenCode OAuth bridge. It uses the shared Codex
-OAuth provider only when `SBX_CRED_OPENAI_MODE=oauth` is advertised. The cloud
-placeholder contract still needs sandbox validation.
+The installer preserves cloud startup credentials and saved logins. With
+`SBX_CRED_OPENAI_MODE=oauth`, it configures both harnesses with shared proxy
+placeholders. Cloud OpenCode does not need the local OAuth bridge file.
+Its managed OAuth entry uses a fixed future expiry because the cloud proxy
+refreshes real tokens. The installer preserves other active logins and an
+inactive managed login. It stops if its credential ID contains different
+tokens. The user confirmed inference with these placeholders in OpenCode
+v2.3.0 after a background service restart. Deployment restarts the cloud
+OpenCode service once for the managed OAuth entry. Save work before deployment;
+restart can interrupt OpenCode sessions. A success receipt prevents repeat
+restarts on unchanged runs. A failed or interrupted restart is retried.
+The full installer path and unchanged reruns still need sandbox checks.
 
 ### OpenAI HTTP 401 with a stored OAuth secret
 
@@ -97,6 +105,32 @@ was stored. A model-list failure alone does not establish an inference failure.
 
 If GitHub also returns 401 and the host secret list has no GitHub entry, add the
 GitHub secret using section 2. It is separate from OpenAI authentication.
+
+### OpenCode reports missing scope `api.responses.write`
+
+The user confirmed this recovery in a fresh cloud sandbox:
+
+1. In OpenCode, open `/connect` and select **OpenAI**.
+2. Select **Codex device code (legacy)**.
+3. Complete browser sign-in with the ChatGPT subscription account.
+4. Start a new chat and ask `Reply with OK only.`
+
+This explicit OAuth login produced a model response. An API key is not required
+for this tested path. Keep the saved login. Interactive sign-in can store real
+credentials inside the sandbox; remove them before saving or moving a template,
+as Docker directs. Do not share auth files or authentication headers.
+
+The user also confirmed a stale background service after placeholder import:
+standalone inference passed, normal inference failed, and normal inference
+passed after the service restart. In sandbox Bash, save work, then run:
+
+```bash
+opencode service restart
+```
+
+Retry the same model. A passing `check_credentials --openai` tests direct
+model-list access, not OpenCode inference or its live endpoint. Do not change
+account roles based on this error alone.
 
 ## 3. Connect MCP
 
@@ -199,8 +233,9 @@ credentials before saving a template or moving the sandbox, as Docker directs.
 - Shared models, subagents, tools, shell, tmux, logs, and ownership rules apply
   to both environments. The installer needs a Debian-compatible image, Bash,
   `flock`, and passwordless sudo.
-- Cloud OpenCode startup credentials stay unchanged. The local bridge import
-  is skipped. Confirm authentication and inference in both harnesses.
+- Cloud OpenCode uses managed OAuth placeholders when OAuth mode is
+  advertised. It creates no local bridge file. Startup credentials and
+  saved selections stay. Confirm authentication and inference in both harnesses.
 - Webtop deployment is disabled in cloud mode. Existing containers stay.
   Cloud port publication creates a public URL. Do not expose the default
   desktop without authentication.

@@ -14,14 +14,19 @@ out of logs and shared output.
   from working and failing runs before changing detection. Use manual
   `cloud` selection until then.
 
-- Investigate cloud OpenAI HTTP 401 in both harness credential checks while
-  the host lists an account-scoped `oauth_refresh` secret. The helper reports
-  API key access when it selects `OPENAI_API_KEY` and probes `/v1/models`.
-  The user confirmed that cloud has no `SBX_CRED_OPENAI_MODE` and has
-  `OPENAI_API_KEY`. OpenCode rejects the key. Codex requests authentication.
-  The same deployment works locally. Preserve the local credential path.
-  Confirm whether cloud creation preceded secret setup. Check the cloud
-  OAuth route before changing credentials or configuration.
+- Validate the cloud OpenCode OAuth service restart in the full installer.
+  The user confirmed that the exact placeholder import supports standalone
+  inference in OpenCode v2.3.0. Normal inference failed until `opencode service
+  restart`, then passed. Deployment now restarts once and records success.
+  Check fresh deployment, an unchanged rerun with no restart or receipt write,
+  interrupted restart recovery, and saved login preservation. Keep OAuth and
+  the working local credential path. Codex inference still needs confirmation.
+
+- Review local OpenCode managed OAuth updates. OpenCode v2.3.0 `auth import`
+  skips existing credential IDs. It does not update values. The cloud path
+  now verifies imports and stops on a different existing managed value.
+  The local expiry-update path still needs a supported update operation and
+  a check against actual import semantics. Preserve saved logins and IDs.
 
 # Feature roadmap
 
