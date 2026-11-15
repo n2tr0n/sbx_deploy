@@ -234,8 +234,9 @@ MCP requires authentication, its equivalent Codex setup still needs validation.
 Paste into **sandbox Bash**. After the logo, always confirm the environment.
 Press Enter to accept the displayed default, or type `local` or `cloud`.
 The installer offers cloud mode when the hostname
-matches `sbx-` plus 27 lowercase letters or digits, and local sandbox ID, agent,
-and credential mode variables are absent. These markers match the supplied
+matches `sbx-` plus 27 lowercase letters or digits, and local sandbox ID and
+agent variables are absent. Credential modes do not select the environment.
+These markers match the supplied
 cloud report. If signals are incomplete or conflict, type the environment.
 To set the prompt default before the paste, use:
 

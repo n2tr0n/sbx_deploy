@@ -7,13 +7,6 @@ out of logs and shared output.
   cloud UI. Verify the available methods, rule scope, and required access.
   Add the instructions to `HOST_SETUP_CLOUD.md`. Preserve intentional denies.
 
-- Investigate intermittent cloud environment detection failure at the end of
-  this session. The user reported "Environment markers are unknown or
-  conflict" in a cloud sandbox. The cause is unknown. Current detection
-  checks the hostname pattern and environment markers. Compare reports
-  from working and failing runs before changing detection. Use manual
-  `cloud` selection until then.
-
 - Validate the cloud OpenCode OAuth service restart in the full installer.
   The user confirmed that the exact placeholder import supports standalone
   inference in OpenCode v2.3.0. Normal inference failed until `opencode service

@@ -182,9 +182,8 @@ SBX_DISCOVER_GATEWAY
             sbx_environment=local
         elif [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ &&
                 -z ${SANDBOX_ID+x} && -z ${SANDBOX_NAME+x} && -z ${SANDBOX_VM_ID+x} && -z ${SBX_AGENT+x} &&
-                -z ${SBX_CRED_OPENAI_MODE+x} && -z ${SBX_CRED_GITHUB_MODE+x} &&
                 ( -z ${SBX_SANDBOX_NAME:-} || ${SBX_SANDBOX_NAME:-} == "sbx_${HOSTNAME#sbx-}" ) ]]; then
-            # Cloud report: generated hostname, with no local IDs or mode markers.
+            # Cloud report: generated hostname with no local ID or agent markers.
             sbx_environment=cloud
         else
             sbx_environment=

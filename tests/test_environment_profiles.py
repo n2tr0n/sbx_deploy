@@ -86,8 +86,24 @@ printf '%s\\n' "$sbx_environment" "$sbx_host_command" "$mcp_gateway_url" "$sbx_i
         self.assertIn('Default: cloud (detected)', result.stderr)
         self.assertIn('Environment [cloud]', result.stderr)
         self.assertEqual(list(self.home.iterdir()), [])
-        self.environment['SBX_CRED_OPENAI_MODE'] = 'none'
-        self.assertEqual(self.select().returncode, 130)
+
+    def test_credential_modes_do_not_change_cloud_detection(self):
+        self.environment['HOSTNAME'] = CLOUD_HOST
+        for name in ('SBX_CRED_OPENAI_MODE', 'SBX_CRED_GITHUB_MODE'):
+            for mode in (None, '', 'oauth', 'apiKey', 'none', 'other'):
+                with self.subTest(name=name, mode=mode):
+                    self.environment.pop(name, None)
+                    if mode is not None:
+                        self.environment[name] = mode
+                    result = self.select()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('Default: cloud (detected)', result.stderr)
+                    self.assertEqual(list(self.home.iterdir()), [])
+                    self.environment['SANDBOX_ID'] = 'local-marker'
+                    result = self.select()
+                    self.assertEqual(result.returncode, 130, result.stderr)
+                    self.assertIn('unknown or conflict', result.stderr)
+                    self.environment.pop('SANDBOX_ID')
 
     def test_explicit_override_wins_over_observed_markers(self):
         self.environment.update(HOSTNAME=CLOUD_HOST, SBX_ENV='local')
