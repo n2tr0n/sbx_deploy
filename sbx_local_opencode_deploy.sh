@@ -778,8 +778,9 @@ finish_installer() {
         summary_command vscode_disable 'Stop and disable automatic startup'
         summary_text ''
         summary_text 'Windows PowerShell - attach the startup kit once:'
-        summary_command "sbx kit add $host_sandbox_arg \"git+https://github.com/n2tr0n/sbx_deploy.git#ref=v0.5a&dir=kits/vscode-tunnel\""
-        summary_text 'Run from any host directory. Publish the kit to v0.5a before use.' "$muted"
+        summary_text 'Skip if sbx inspect already lists vscode-tunnel from any source.' "$muted"
+        summary_command "sbx kit add $host_sandbox_arg \"git+https://github.com/n2tr0n/sbx_deploy.git#ref=main&dir=kits/vscode-tunnel\""
+        summary_text 'Run from any host directory. Inspect the kit on main before use.' "$muted"
         summary_text 'Kit attachment restarts the sandbox.' "$muted"
         summary_text 'Attach before tunnel setup. See HOST_SETUP_WIN.md for checks.' "$muted"
         summary_text 'If attachment fails with OAuth policy conflict (409), keep the sandbox.' "$amber"
