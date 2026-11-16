@@ -6,166 +6,99 @@ and deployment commands in **sandbox Bash**. Skip completed setup.
 
 ## Windows setup
 
-Use Windows PowerShell 5.1 or PowerShell 7 in a terminal. Install the
-[SBX CLI](https://docs.docker.com/ai/sandboxes/) first. Your Docker account
-must have cloud access and permission to create billable sandboxes. Use a
-disposable sandbox for the first test. This script has not passed a live test.
-Cloud creation with static MCP is currently blocked in the reported v0.53.0
-setup by a missing secret named `docker`. See the recovery section below.
-
-Run [sbx_cloud_host_setup.ps1](sbx_cloud_host_setup.ps1) from the repository
-root in Windows PowerShell. It asks for the sandbox name first. It
-checks cloud access, prepares credentials, adds initial network exceptions,
-creates an `opencode` sandbox, and connects Context7. Then it opens sandbox
-Bash for you to paste `sbx_local_opencode_deploy.sh`. It does not run the
-installer. Creation uses 2 CPUs, 4 GiB, and a two-hour timeout with the stop
-action. Compute is billable while the sandbox runs.
-
-Review the displayed secret metadata. Choose `keep` only when the required
-credential exists at the stated scope. Choose `add` only when it is missing.
-Paste keys and tokens at the script's masked prompt. PowerShell shows `*`
-characters and then `Input received. Saving secret...`. The value goes to
-SBX through standard input. It is not put in command arguments or files.
-OpenAI OAuth still uses browser sign-in. The script never uses `--force`.
-Keep intentional denies. Initial allow rules do not override account denies.
-The script does not change account policy or edit an existing sandbox policy.
-
-Context7 needs one browser step. In Docker Agentic Platform, open **MCP**.
-Connect Context7 and authorize access with the same Docker account. If it is
-not listed, add `https://mcp.context7.com/mcp/oauth` as a remote MCP URL.
-Use the connected server name when the script asks for it. This step follows
-[Docker's MCP connection instructions](https://docs.docker.com/agentic-platform/mcp/).
-Complete this connection before sandbox creation. The script passes the server
-name with `--static-mcp`. A sandbox created without an MCP gateway cannot
-gain one through `mcp load` on the tested CLI.
-
-Local registrations from `sbx mcp add` do not configure cloud sandbox MCP.
-The Console's **Add to your client** command connects an external client.
-The user tested that connection; it did not repair the cloud creation error
-for the missing `docker` secret. Do not repeat it as a cloud repair step.
-
-Receipts contain no credentials. They are stored under
-`%LOCALAPPDATA%\sbx-deploy\cloud`. A completed rerun uses its receipt and
-skips CLI calls and file writes. Choose `recheck` to check cloud state again.
-Use `recheck` after changing Docker accounts, secrets, or sandbox state.
-The receipt does not prove that an expired sandbox still exists.
+Run [sbx_cloud_host_setup_win.ps1](sbx_cloud_host_setup_win.ps1) from the repository
+root in Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sbx_cloud_host_setup.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sbx_cloud_host_setup_win.ps1
 ```
 
-If a command fails, keep the sandbox and receipt. Fix the reported cause and
-run the same script again. A failed SBX command stops setup and reports its
-exit code. If creation finished before interruption, the script asks you to
-inspect the existing sandbox before it resumes. It never deletes a sandbox.
-Do not run two setup scripts for the same name at the same time.
+Install the [SBX CLI](https://docs.docker.com/ai/sandboxes/) first. Your Docker
+account needs cloud access and permission to create billable sandboxes.
+The script asks for the sandbox name first. It prepares secrets and network
+access, creates an `opencode` sandbox, checks startup prerequisites, then
+opens Bash. Paste the complete `sbx_local_opencode_deploy.sh` there and select
+**cloud**. The PowerShell script does not run the Bash installer.
 
-### Creation reports a missing secret named docker
+Creation uses 2 CPUs, 4 GiB, and a two-hour timeout with the stop action.
+Compute is billable while the sandbox runs. Use a disposable sandbox for the
+first full script test. The manual direct MCP path passed; the updated full
+script flow still needs live validation.
 
-The reported creation failed with `secret not found ... name=docker` after
-static MCP was selected. Its credential type and secret store are not yet
-confirmed. Do not run `secret set docker`, create a custom token, or change
-registry credentials based on this message alone.
+### Keys and MCP
 
-Check cloud secret metadata with `sbx --debug=false --cloud secret ls`.
-The user completed local gateway registration and sign-in, then confirmed
-that the same cloud error remained. This is not a verified repair path.
-The missing-secret source remains open. Inspect the resolved published kit
-before changing credentials. The user's full v3 descriptor declares no
-credentials. The user runs SBX v0.53.0, commit
-`2c62838074738845f8f1096ff5f8920df61152fb`. The `docker` reference is outside
-this descriptor; generated CLI configuration and cloud provisioning have not
-been traced. Local gateway sign-in did not resolve it.
+Context7 uses a **global Docker cloud custom secret**. It applies to all new
+cloud sandboxes in this Docker account. Configure it before creation:
 
-Check account access and cloud connectivity with
-`sbx --debug=false --cloud diagnose`. Do not use `--upload` for this check.
-If diagnostics pass, send Docker support the CLI version, resolved public
-kit descriptor, creation options, and error text. Remove account IDs, private
-gateway URLs, and credentials from the report. This is an unresolved cloud
-creation failure, not a confirmed missing user-supplied Docker token.
+- Name: `context7`
+- Host: `mcp.context7.com`
+- Environment placeholder: `CONTEXT7_API_KEY`
+- Header: `Authorization`
+- Format: `Bearer %s`
 
-The user ran diagnostics on this setup. All six checks passed. Authentication,
-cloud API reachability, cloud entitlement, and TLS checks passed. This does
-not confirm that cloud MCP provisioning has all required internal secrets.
+Choose **Keep** when this secret already exists. Choose **Add** only when it
+is missing. The script shows secret metadata for review. It does not overwrite
+an existing key without your explicit selection. Keys use a masked prompt
+with `*`, a saving message, and a success message. Values go through standard
+input. They do not go in command arguments, receipts, or config files.
+OpenAI OAuth uses browser sign-in. Existing host logins stay.
 
-Support report:
+The Bash installer adds direct `context7` connections in OpenCode and Codex
+when no existing Docker MCP gateway is configured. Both use
+`https://mcp.context7.com/mcp`. Docker's cloud proxy adds the global API key.
+The real key stays outside the sandbox. Matching existing client entries and
+user overrides stay. A direct connection is separate from Docker's MCP gateway.
 
-```text
-Title: Cloud creation with --static-mcp fails: secret not found name=docker
+The user confirmed real tool calls in both harnesses. Context7 API-key usage
+increased for both. No Context7 OAuth login or API-key header in either client
+was needed. See [cloud custom secrets](https://docs.docker.com/ai/sandboxes/cloud/credentials/#configure-a-custom-secret).
 
-Host: Windows PowerShell
-CLI: sbx v0.53.0, commit 2c62838074738845f8f1096ff5f8920df61152fb
-Workload: docker.io/sbx/opencode:latest
-Resolved kit: schemaVersion 3; sandbox image and entrypoint only;
-no credential declarations.
-Creation options: --static-mcp context7 --cpus 2 --memory 4g
---ttl 2h --on-timeout stop; exact host allow rules also supplied.
+Docker-managed MCP gateway creation remains a separate open issue. On the
+reported SBX v0.53.0 setup, `--static-mcp context7` failed with a missing
+`docker` secret. Console creation also failed with Context7 and DeepWiki.
+This setup avoids that path. Do not create a guessed `docker` token.
 
-Result: Kit configuration fails with:
-create cloud sandbox: invalid_argument: secret not found:
-account=[redacted] name=docker
+### Controls and reruns
 
-Cloud diagnostics: all 6 checks pass. Authentication, API access,
-subscription, and TLS checks pass.
-OpenAI OAuth exists at account scope.
-Local docker-mcp registration and browser sign-in did not fix creation.
-Manual controls, outside the PowerShell setup script:
-- create --name cloud-test02 --static-mcp context7 opencode: same failure.
-- create --name mcp-test01 --static-mcp context7 shell: same failure.
-- create --name mcp-test01 shell: succeeds.
-All three used sbx --debug=false --cloud.
-This isolates the static MCP option. The wrapper, custom network rules,
-CPU, memory, and timeout flags are not needed to reproduce the failure.
-Console control: Shell with Context7 also fails. Launch preparation reports
-one MCP server, then creation reports "MCP servers couldn't be connected."
-All failed MCP tests selected Context7. Other MCP servers are not yet tested.
-Earlier creation without static MCP succeeded. Its sandbox had no gateway;
-mcp load refused attachment and required --static-mcp at creation.
+Use numbered menus. Press Enter for a displayed default or a review step.
+Creation and recovery of an interrupted creation require `y`; Enter cancels.
+Esc cancels menus and confirmations. Use `0` with the line-input fallback.
+Line input requires Enter after a choice. Names and masked keys use text
+input; Ctrl+C cancels those prompts. `NO_COLOR` disables color. Narrow
+terminals use a compact layout.
 
-Question: Which component references the docker secret, and what is the
-supported way to provision it for CLI cloud MCP without copying tokens
-or changing existing credentials?
-```
+Receipts contain no credentials. They are under
+`%LOCALAPPDATA%\sbx-deploy\cloud`. A completed rerun skips CLI calls and file
+writes unless you choose **Recheck cloud state**. Use that choice after
+changing Docker accounts, secrets, or sandbox state. A receipt does not prove
+that a sandbox still exists. Old gateway-mode receipts require a new review
+of the global Context7 key before migration to the direct setup.
 
-Do not retry creation or change credentials without new evidence.
-Do not share tokens, authorization headers,
-or private gateway URLs. Keep the receipt and existing secrets. After the
-cause is resolved, rerun the script with the same name. It checks for an
-existing sandbox before retrying creation.
+If the recorded sandbox is missing, the script checks the cloud list and
+inspects its name. When both confirm absence, it offers recreation with y/n.
+Check the Docker account before selecting `y`. Review the existing secrets
+and choose **Keep** where they still apply. Review network access, then
+confirm creation. The script reuses the name without deleting or replacing
+cloud secrets. Enter, `n`, or Esc cancels recreation and keeps the receipt.
+Other inspection errors stop setup; they do not offer recreation.
 
-### Other recovery checks
+The user confirmed that a sandbox-scoped GitHub secret can be reused after
+deletion and recreation with the same name. Account access passed before
+and after recreation without storing the secret again. A retained secret
+can still be expired or invalid; its presence alone does not prove access.
 
-For a recorded sandbox, setup checks `inspect` by its saved name. A mismatch
-in `ls --quiet` output does not establish that the sandbox is absent. If
-inspection fails, keep the receipt and secrets. Check the reported CLI error
-and Docker account. Setup does not recreate the recorded sandbox.
+If a command fails, keep the receipt and fix the reported cause. Rerun the
+same script. Completed creation is not repeated. If startup lacks the
+Context7 placeholder, check the global secret's settings. A sandbox created
+before the secret existed needs a fresh creation. Test sandboxes are
+disposable. Keep host logins and secrets when replacing a test sandbox.
 
-If the MCP status check reports `sandbox has no MCP gateway`, keep the sandbox,
-receipt, and secrets. The user confirmed that `mcp load` cannot add the missing
-gateway. Run the updated script with a new sandbox name. Connect Context7 before
-creation. The script uses `--static-mcp` to request the gateway. A GitHub secret
-scoped to the old name does not transfer. Configure a secret for the new name
-at its secret prompt, or use a suitable existing account default. Do not remove
-the old sandbox to reuse its name. Other MCP status errors also stop setup.
-
-If a receipt is unknown or damaged, keep it. Inspect the named sandbox and
-secret metadata with the manual steps below. Use a new name for a fresh guided
-setup. Do not delete secrets, reset policy, or remove a working sandbox to
-repair a receipt. The receipt assumes the same Docker account and unchanged
-prepared credentials when resuming an incomplete run.
-
-Network rules cover known installer downloads and common Debian sources.
-They do not prove connectivity. Image-specific mirrors, redirects, inference,
-and VS Code tunnel access can need more hosts. Follow installer errors and
-policy logs. Add only missing access. Preserve intentional denies. This script
-does not attach a startup kit or publish ports. Cloud Webtop stays disabled.
-
-The commands below are manual recovery steps. Skip completed work after the
-guided setup. See [cloud network policy](https://docs.docker.com/ai/sandboxes/cloud/network-policy/)
-for account and sandbox scope. Secrets must exist before creation; see
-[cloud credentials](https://docs.docker.com/ai/sandboxes/cloud/credentials/).
+Unknown or damaged receipts stop setup. Keep them for review. Check the
+sandbox and secret metadata before repair. Do not reset policies or delete
+host credentials to repair a receipt. Do not run two setups for the same name.
 
 ## Manual creation with a sandbox GitHub token
+
 
 The user confirmed that this setup works for cloud GitHub access.
 
@@ -184,12 +117,11 @@ Paste the repository token at the secret prompt. Do not put it in the command.
 Then create the sandbox with the same name:
 
 ```powershell
-sbx --cloud create --name repo-a --static-mcp context7 opencode
+sbx --cloud create --name repo-a --allow-network mcp.context7.com:443 opencode
 ```
 
 For another repository, repeat with a different sandbox name and its token.
-Connect Context7 in Docker Agentic Platform before creation. Replace `context7`
-in the command if its connected server name differs.
+Prepare the global Context7 custom secret before creation as described above.
 A sandbox-scoped GitHub secret overrides the account-scoped GitHub secret.
 Use the CLI for these steps. Cloud naming in the TUI is not confirmed.
 See [cloud creation](https://docs.docker.com/ai/sandboxes/cloud/usage/#create-a-sandbox)
@@ -357,46 +289,30 @@ account roles based on this error alone.
 
 ## 3. Connect MCP
 
-Connect Context7 through Docker Agentic Platform with the same Docker account.
-Cloud sandboxes do not use registrations from local `sbx mcp add`.
-Select the connected server at creation with `--static-mcp context7`.
-The tested CLI cannot add a gateway later to a sandbox created without one.
+The Bash installer configures direct Context7 in both harnesses when no
+existing gateway is configured. The global cloud custom secret must exist
+before sandbox creation. No real API key is written into client settings.
 
-Check the cloud sandbox gateway:
-
-```powershell
-sbx --cloud mcp ls <sandbox-id>
-```
-
-If the gateway exists, load Context7 only if absent. Use its connected server
-name if different. If no gateway exists, run the Windows setup script with a
-new sandbox name. Preserve the old sandbox and its secrets.
-
-```powershell
-sbx --cloud mcp load context7 --sandbox <sandbox-id>
-```
-
-The installer uses `SBX_MCP_GATEWAY_URL` or `MCP_GATEWAY_URL` if set. Otherwise,
-it reuses its saved URL or reads the existing `mcp-gateway` entry in OpenCode,
-then Codex. OpenCode JSONC takes precedence over JSON. Discovery reads no auth
-files and copies no authentication headers. It makes no network requests.
-
-If no endpoint exists, tool setup continues and reports MCP as pending. It
-does not create an empty MCP entry or guess the local gateway address. Attach
-the server, then rerun. If automatic discovery still finds no URL, review the
-agent MCP config locally. Do not share its full contents or authentication headers.
-
-Set the URL in **sandbox Bash**, only if needed. Replace the example value:
+The user tested these commands manually inside sandbox Bash:
 
 ```bash
-export SBX_MCP_GATEWAY_URL='<sandbox-mcp-url>'
+opencode mcp add context7 --global --url https://mcp.context7.com/mcp
 ```
 
-Use an HTTP or HTTPS URL without credentials, a query string, or a fragment.
-Both harnesses use this endpoint. Existing MCP headers and user overrides stay.
-Do not put an access token in the URL. No cloud endpoint is verified by this
-repository yet. Existing headers stay in their original harness. If cloud
-MCP requires authentication, its equivalent Codex setup still needs validation.
+```bash
+codex mcp add context7 --url https://mcp.context7.com/mcp
+```
+
+Use them only for a missing entry during manual repair. Preserve existing
+entries and user edits. Confirm a real Context7 tool call in each harness and
+check API-key usage in the Context7 dashboard. A connected status alone does
+not prove that the API key is used.
+
+Existing Docker gateways remain supported. Deployment can discover their
+URL from existing client config or `SBX_MCP_GATEWAY_URL`. Gateway URLs must
+omit real credentials, query strings, and fragments. Existing headers stay
+in their original client. Direct Context7 is the tested path for new cloud
+sandboxes; local sandboxes keep their host-managed gateway setup.
 
 ## 4. Deploy and check
 

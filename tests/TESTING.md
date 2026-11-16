@@ -16,7 +16,7 @@ python3 -m unittest discover -s tests -v
 
 On Windows, use `python` instead of `python3`.
 
-Check `sbx_cloud_host_setup.ps1` on Windows:
+Check `sbx_cloud_host_setup_win.ps1` on Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_cloud_host_setup.ps1
@@ -24,15 +24,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_cloud_host_setup.
 
 This test parses the external script and runs it with fake CLI calls and
 prompt answers. It checks fresh setup, unchanged reruns, explicit rechecks,
-existing sandboxes, interrupted creation, MCP failures, and receipt recovery.
-It checks masked GitHub and OpenAI key prompts, standard input delivery,
+existing sandboxes, interrupted creation, placeholder checks, and receipt recovery.
+It checks masked GitHub, OpenAI, and global Context7 key prompts, standard input delivery,
 empty input, and failed saves. Synthetic keys must not appear in arguments,
 output, or receipts. Terminal masking and live cloud saves still need checks.
-It checks default and custom `--static-mcp` names at creation. Missing MCP
-gateways stop setup without loading or recreating the sandbox. Unrelated MCP
-status errors also stop setup. Live creation with a gateway remains untested.
-Recorded sandboxes are also tested with a mismatched name list and with
-failed direct inspection. Neither case can trigger sandbox creation.
+It also checks numbered menus, invalid choices, Enter defaults, cancellation,
+and the narrow plain layout. Real terminal key handling still needs a check.
+It checks that creation omits `--static-mcp`, that Context7 uses a global
+cloud custom secret, and that old receipts require review before migration.
+Recorded sandboxes are tested with a mismatched name list and failed direct
+inspection. A confirmed missing sandbox requires explicit recreation and a
+fresh review. Tests check reused secrets, declined recreation, old receipts,
+and unchanged reruns. Unrelated inspection errors cannot trigger recreation.
 It makes no network requests and runs no installer. Run the same test with
 `pwsh` to check PowerShell 7 when available. Live cloud checks remain required.
 The test uses a child scope. Its fake commands do not stay in the calling
@@ -43,7 +46,7 @@ Keep the source files and tests in this layout:
 ```text
 sbx_local_opencode_deploy.sh
 sbx_sandbox_validate.sh
-sbx_cloud_host_setup.ps1
+sbx_cloud_host_setup_win.ps1
 tests/
   test_cloud_host_setup.ps1
   test_auth_preservation.py
@@ -53,6 +56,7 @@ tests/
   test_environment_profiles.py
   test_opencode_discovery.py
   test_package_timezone.py
+  test_plugin_clone.py
   test_sandbox_validator.py
   test_shell_startup.py
   test_tmux_snapshot.py
@@ -63,6 +67,10 @@ does not copy the tests into the sandbox.
 
 ## What the tests check
 
+- `test_plugin_clone.py` checks public downloads with fake Git and timeout
+  commands. It checks disabled credential prompts, failure and interruption
+  status, staging cleanup, preserved user files, and unchanged reruns. It
+  runs no Git operations and makes no network requests.
 - `test_environment_profiles.py` checks explicit and automatic selection,
   unknown environments, cloud URL privacy, saved profile ownership, moved
   sandboxes, terminal selection input and cancellation, and wrapper and payload
@@ -79,6 +87,8 @@ does not copy the tests into the sandbox.
   saved entries and models imports that skip existing IDs, as v2.3.0 does.
 - `test_config_ownership.py` checks fresh configs, custom settings, MCP headers,
   other MCP servers, unchanged reruns, and interrupted config updates.
+  It also checks direct cloud Context7 defaults in both harnesses and preserves
+  native entries, headers, disable flags, and custom endpoints.
 - `test_download_errors.py` checks local and cloud recovery commands, known
   redirect hosts, unrelated failures, concise output, narrow terminals, cleanup,
   and preserved exit codes. It uses synthetic logs and runs no host commands.
