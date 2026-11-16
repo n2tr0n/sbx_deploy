@@ -1,5 +1,7 @@
 # SBX Deploy
 
+**Experimental public alpha. Tested on Windows hosts only. Use at your own risk**
+
 One installer for OpenCode and Codex in local
 [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/).
 
@@ -13,7 +15,6 @@ support, host-managed credentials, and layered network security.
 - Track deployment progress. Use run logs to diagnose failures.
 - Skip completed setup on reruns. Keep your edits and saved logins.
 
-**Experimental public alpha. Tested on Windows hosts only.**
 Check [known issues](BACKLOG.md) before deployment.
 
 ## Get started
