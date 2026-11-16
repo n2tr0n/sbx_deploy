@@ -60,3 +60,5 @@ out of logs and shared output.
 - Add a Git user name and email wizard.
 - Clean up powershell script TUI; it's really sloppy
 - Cloud post-deployment doesn't load new shell/alias ENV - requires manual session restart
+- Give local sbx the same full pipeline treatment as cloud
+- rename main play to not say local, since its local and cloud now
