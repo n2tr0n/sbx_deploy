@@ -62,3 +62,4 @@ out of logs and shared output.
 - Cloud post-deployment doesn't load new shell/alias ENV - requires manual session restart
 - Give local sbx the same full pipeline treatment as cloud
 - rename main play to not say local, since its local and cloud now
+- can PS deployment copy or rename an existing gh secret so we don't have to re-enter it?
