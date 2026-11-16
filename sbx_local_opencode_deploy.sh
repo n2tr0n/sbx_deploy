@@ -2,10 +2,15 @@
 # Target: local and cloud Docker Sandboxes (sbx) of type opencode.
 # One editable file. Keep shared setup and environment profiles together.
 # After the logo, confirm local or cloud. Press Enter to keep the detected default.
-# Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
+# Preserve configured cloud gateways. Use direct Context7 when no gateway is configured.
+# Configure direct cloud Context7 in both harnesses. The cloud proxy supplies its key.
+# Configure cloud OpenCode OAuth with shared proxy placeholders. Keep saved logins.
+# Verify managed OAuth imports. Stop if an existing managed value differs.
+# Restart cloud OpenCode once after OAuth setup. Retry if restart was interrupted.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
+# Download public tmux plugins without Git credential prompts. Stop on clone errors.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
 # --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
@@ -44,7 +49,7 @@ sbx_save_and_run() {
     sbx_cloud_profile() {
         sbx_host_command='sbx --cloud'
         sbx_host_doc=HOST_SETUP_CLOUD.md
-        # Keep cloud startup credentials. Do not import the local Docker bridge.
+        # Cloud has no local Docker bridge. Use shared OAuth placeholders instead.
         sbx_import_oauth_bridge=false
         sbx_webtop_supported=false
         mcp_gateway_url=${SBX_MCP_GATEWAY_URL:-${MCP_GATEWAY_URL:-}}
@@ -180,9 +185,8 @@ SBX_DISCOVER_GATEWAY
             sbx_environment=local
         elif [[ ${HOSTNAME:-} =~ ^sbx-[a-z0-9]{27}$ &&
                 -z ${SANDBOX_ID+x} && -z ${SANDBOX_NAME+x} && -z ${SANDBOX_VM_ID+x} && -z ${SBX_AGENT+x} &&
-                -z ${SBX_CRED_OPENAI_MODE+x} && -z ${SBX_CRED_GITHUB_MODE+x} &&
                 ( -z ${SBX_SANDBOX_NAME:-} || ${SBX_SANDBOX_NAME:-} == "sbx_${HOSTNAME#sbx-}" ) ]]; then
-            # Cloud report: generated hostname, with no local IDs or mode markers.
+            # Cloud report: generated hostname with no local ID or agent markers.
             sbx_environment=cloud
         else
             sbx_environment=
@@ -436,10 +440,13 @@ SBX_BANNER
 # Target: local and cloud Docker Sandboxes (sbx) of type opencode.
 # One editable file. Keep shared setup and environment profiles together.
 # After the logo, confirm local or cloud. Press Enter to keep the detected default.
-# Discover cloud MCP from existing config or URL variables. Report missing MCP setup.
+# Preserve configured cloud gateways. Use direct Context7 when no gateway is configured.
+# Configure direct cloud Context7 in both harnesses. The cloud proxy supplies its key.
+# Verify managed OAuth imports. Stop if an existing managed value differs.
 # Install tools. Configure OpenCode, Codex, shell, and tmux. Preserve user edits and logins.
 # Use Bash in tmux when its default shell is /bin/sh.
 # Find OpenCode on PATH. Upgrade only the supported user-local installation.
+# Download public tmux plugins without Git credential prompts. Stop on clone errors.
 # Paste the entire file into sandbox Bash with passwordless sudo. Confirm the hostname.
 # Rerun: bash ~/sbx_local_opencode_deploy.sh
 # --tmux-redeploy restores supplied tmux settings. SBX_CHECK_AUTH=1 rechecks authentication.
@@ -535,6 +542,9 @@ set -euo pipefail
 # Define shared values before generating helpers. Installed helpers contain a copy.
 main_model=gpt-6.1-sol
 subagent_model=gpt-6-luna
+context7_url=https://mcp.context7.com/mcp
+cloud_context7_url=
+if [[ $sbx_environment == cloud && -z $mcp_gateway_url ]]; then cloud_context7_url=$context7_url; fi
 oauth_access=oai-oat01-proxy-managed
 oauth_refresh=oai-ort01-proxy-managed
 oauth_provider=sbx-chatgpt
@@ -977,7 +987,7 @@ finish_installer() {
             summary_command 'hash -r'
         fi
         summary_command check_credentials 'Live authentication and credential sources'
-        summary_command check_mcp 'Discover gateway servers and tools'
+        summary_command check_mcp 'Discover MCP tools'
         if [[ -n $webtop_status ]]; then
             summary_command desktop 'Desktop status and reconnection help'
         fi
@@ -1060,10 +1070,6 @@ capture_output
 stage_begin 'Environment' 'Checking selected profile'
 printf '%s\n' "Environment: $sbx_environment; host setup: $sbx_host_doc" >> "$log_file"
 stage_done unchanged "Using $sbx_environment profile"
-if [[ $sbx_environment == cloud && -z $mcp_gateway_url ]]; then
-    record_issue cloud-mcp 'Cloud MCP setup' 'No MCP gateway endpoint is configured. Tool setup can continue; MCP is not configured.' \
-        $'Windows PowerShell:\n  sbx --cloud mcp ls\nConnect Context7 in Docker Agentic Platform, then load it into this sandbox using HOST_SETUP_CLOUD.md.\nSandbox Bash after attachment:\n  bash ~/sbx_local_opencode_deploy.sh\nIf no URL is registered in OpenCode or Codex, set SBX_MCP_GATEWAY_URL to the sandbox endpoint before rerun.'
-fi
 stage_begin 'Checks' 'Checking existing setup' 
 # Apply retention only to the exact deployment log filename format.
 # Keep this run and the four newest other logs, including when timestamps match.
@@ -1249,13 +1255,25 @@ fi
 
 stage_begin 'Plugins' 'Checking TPM and tmux-resurrect'
 clone_plugin() (
-    local repository=$1 destination=$2 staging_dir
+    local repository=$1 destination=$2 staging_dir status
     exists "$destination" && return 0
     mkdir -p -- "$plugin_dir"
     staging_dir=$(mktemp -d -- "$plugin_dir/.plugin-stage.XXXXXX")
     trap 'rm -rf -- "$staging_dir"' EXIT
     # Same-filesystem publication; never merge into or replace an existing path.
-    timeout --kill-after="${kill_seconds}s" "${install_seconds}s" git clone --depth 1 "https://github.com/tmux-plugins/$repository" "$staging_dir/checkout"
+    # Public downloads need no interactive login. Keep user Git settings unchanged.
+    if GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false SSH_ASKPASS=/bin/false \
+        timeout --kill-after="${kill_seconds}s" "${install_seconds}s" \
+        git -c credential.helper= -c core.askPass=/bin/false -c credential.interactive=false \
+        clone --depth 1 "https://github.com/tmux-plugins/$repository" "$staging_dir/checkout" </dev/null; then
+        :
+    else
+        status=$?
+        case $status in
+            124|137) die "Public plugin download timed out: $repository. Check GitHub network access." "$status" ;;
+            *) die "Public plugin download failed: $repository. No Git login was requested. Check the Git error above, cloud GitHub secret scope, and network policy." "$status" ;;
+        esac
+    fi
     mv -nT -- "$staging_dir/checkout" "$destination"
     # mv -n can succeed without publishing if another run created the target.
     if [[ ! -e $staging_dir/checkout ]]; then
@@ -2158,7 +2176,8 @@ def check_github():
            f'HTTP {code[1]}' if code else 'account request failed')
     if not ok and code and code[1] == '401':
         if sbx_environment == 'cloud':
-            actions.append('GitHub 401: check sbx --cloud secret ls in host PowerShell. See HOST_SETUP_CLOUD.md.')
+            actions.append('GitHub 401: in host PowerShell, run sbx --cloud secret ls. Check the GitHub entry and its scope. If missing, run sbx --cloud secret set github.')
+            actions.append('For a sandbox created in the web UI, check its Docker Agentic Platform secrets instead. A proxy placeholder does not confirm a valid secret. See HOST_SETUP_CLOUD.md.')
         else:
             actions.append('GitHub 401: if host gh works, run sbx daemon restart in host PowerShell, then retry.')
 
@@ -2260,6 +2279,7 @@ credential_check_contents > "$work_dir/sbx_check_credentials"
 queue_managed_file "$HOME/.local/bin/sbx_check_credentials" "$work_dir/sbx_check_credentials"
 
 mcp_check_contents() {
+    local mcp_gateway_url=${mcp_gateway_url:-${cloud_context7_url-}}
     printf '#!/usr/bin/env python3\n'
     python_settings mcp_gateway_url credential_seconds sbx_host_command
     cat <<'SBX_MCP_CHECK'
@@ -2362,7 +2382,7 @@ def check_mcp():
                 raise ValueError('Invalid MCP result')
             return result
 
-    print('\n  ' + paint('BROKERED MCP', 'bold'), flush=True)
+    print('\n  ' + paint('MCP TOOLS', 'bold'), flush=True)
     print('  ' + paint('-' * (width - 2), 'dim'))
     try:
         result = rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
@@ -2413,7 +2433,7 @@ def check_mcp():
         if not names:
             note('No displayable tools exposed.')
         print()
-        note(f'{len(tools)} tools exposed | Discovery only; upstream OAuth unverified.')
+        note(f'{len(tools)} tools exposed | Discovery only; authentication and tool calls unverified.')
         if any(name in names for name in ('mcp-exec', 'code-mode')):
             note('Additional upstream tools may be available through the gateway.')
         print('  ' + paint('-' * (width - 2), 'dim'))
@@ -3121,27 +3141,39 @@ case ${SBX_CRED_OPENAI_MODE:-none} in
     *) : ;; # The credential stage reports this once, with recovery actions.
 esac
 # GitHub mode can lag host updates. Check live access before warning.
-if "$host_oauth" && "$sbx_import_oauth_bridge" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
-    # Import only the kit's masked bridge record. Keep exported credentials in memory.
+if "$host_oauth" && [[ -f $opencode_binary && -x $opencode_binary ]]; then
+    # Local mode verifies the kit bridge. Cloud uses the shared proxy placeholders.
+    # Both require the advertised OAuth mode. Keep exported credentials in memory.
     # Never put real local tokens in logs, temporary files, or backups.
     # Use the kit's lock to prevent concurrent startup imports.
-    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" <<'SBX_PROXY_OAUTH'
+    python3 - "$opencode_binary" "$oauth_access" "$oauth_refresh" "$work_dir/changed" "$credential_seconds" "$kill_seconds" "$sbx_environment" "$log_dir/opencode-oauth-service.sha256" <<'SBX_PROXY_OAUTH'
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tempfile
 
 binary, access, refresh, changed = sys.argv[1:5]
-credential_seconds, kill_seconds = map(int, sys.argv[5:])
+credential_seconds, kill_seconds = map(int, sys.argv[5:7])
+environment = sys.argv[7]
+service_receipt = Path(sys.argv[8])
+if environment not in ('local', 'cloud'):
+    sys.exit('Unknown OAuth environment; credentials left unchanged.')
 data_home = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
 if not data_home.is_absolute():
     sys.exit('OpenCode data directory must be absolute.')
 directory = data_home / 'opencode'
 source = directory / 'auth.json'
-if source.is_symlink() or not source.is_file():
+if environment == 'local' and (source.is_symlink() or not source.is_file()):
     sys.exit('Missing regular OpenCode OAuth bridge file; restart the sandbox after authorizing host OAuth.')
+if environment == 'cloud':
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        sys.exit('Unsafe OpenCode data directory; preserve it and repair its path before retrying.')
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
 lock_path = directory / '.credentials-sync.lock'
 try:
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
@@ -3164,17 +3196,22 @@ with os.fdopen(lock_fd, 'w') as lock:
     if result.returncode:
         print('Credential synchronization lock timed out; retry after the other import finishes.', file=sys.stderr)
         sys.exit(result.returncode)
-    try:
-        bridge = json.loads(source.read_text())
-        record = bridge['openai']
-        if (record['type'] != 'oauth' or record['access'] != access
-                or record['refresh'] != refresh):
-            raise ValueError()
-        expires = float(record['expires'])
-        if not math.isfinite(expires) or expires < 0 or not expires.is_integer():
-            raise ValueError()
-    except (OSError, ValueError, KeyError, TypeError, OverflowError):
-        sys.exit('Expected Docker OAuth placeholders and a valid expiry; local credentials left unchanged.')
+    if environment == 'local':
+        try:
+            bridge = json.loads(source.read_text())
+            record = bridge['openai']
+            if (record['type'] != 'oauth' or record['access'] != access
+                    or record['refresh'] != refresh):
+                raise ValueError()
+            expires = float(record['expires'])
+            if not math.isfinite(expires) or expires < 0 or not expires.is_integer():
+                raise ValueError()
+        except (OSError, ValueError, KeyError, TypeError, OverflowError):
+            sys.exit('Expected Docker OAuth placeholders and a valid expiry; local credentials left unchanged.')
+    else:
+        # Fixed expiry: the cloud proxy refreshes real tokens. Do not trigger CLI refresh.
+        # Keep reruns identical. Never create a bridge file or copy startup credentials.
+        expires = 4102444800000  # 2100-01-01, milliseconds.
     value = dict(type='oauth', methodID='chatgpt-browser', access=access,
                  refresh=refresh, expires=int(expires))
     wanted = dict(id='sbx-openai', integrationID='openai', label='Sandbox OpenAI',
@@ -3200,13 +3237,66 @@ with os.fdopen(lock_fd, 'w') as lock:
                    and item.get('id') != wanted['id'] and item.get('active') is True
                    for item in existing)):
         sys.exit(0)
-    if not current or current.get('value') != value:
+    # v2.3.0 import skips existing IDs. The public update API changes labels only.
+    # Do not delete and recreate credentials to change their expiry.
+    if current and current.get('value') != value:
+        sys.exit('Managed ' + environment + ' OpenCode OAuth entry differs; credentials left unchanged. '
+                 'Import cannot update existing IDs. Keep saved logins and auth.json. '
+                 'Review the managed sbx-openai entry before retrying; reauthorization alone may not repair it.')
+    receipt = None
+    if environment == 'cloud':
+        receipt = 'sbx-opencode-oauth-service-v1\n' + hashlib.sha256(
+            json.dumps(value, sort_keys=True).encode()).hexdigest() + '\n'
+        if service_receipt.is_symlink() or (service_receipt.exists() and not service_receipt.is_file()):
+            sys.exit('Unsafe OpenCode service receipt; preserve it and repair its path before retrying.')
+        if service_receipt.exists():
+            saved = service_receipt.read_text()
+            if not re.fullmatch(r'sbx-opencode-oauth-service-v1\n[0-9a-f]{64}\n', saved):
+                sys.exit('Unknown OpenCode service receipt; preserve it and review it before retrying.')
+        else:
+            saved = None
+    if not current:
         run('import', payload=json.dumps([wanted]))
+        # Verify persistence before reporting a change in either environment.
+        try:
+            imported = json.loads(run('export'))
+        except (ValueError, TypeError):
+            sys.exit('Cannot verify OpenCode OAuth import; keep saved logins and review the credential inventory before retrying.')
+        if (not isinstance(imported, list)
+                or sum(isinstance(item, dict) and item.get('id') == wanted['id']
+                       for item in imported) != 1
+                or not any(
+                    item.get('id') == wanted['id'] and item.get('integrationID') == 'openai'
+                    and item.get('active') is True and item.get('value') == value
+                    for item in imported if isinstance(item, dict))):
+            sys.exit('OpenCode OAuth import was not applied; keep saved logins. Review the credential inventory before retrying.')
+        Path(changed).touch()
+        if environment == 'cloud':
+            saved = None
+    if receipt is not None and saved != receipt:
+        # Standalone auth changes do not refresh a running background service.
+        # Record success only after restart. A failure or interruption must retry.
+        print('Restarting cloud OpenCode service to load OAuth routing.', flush=True)
+        result = subprocess.run(['timeout', f'--kill-after={kill_seconds}s', f'{credential_seconds}s',
+                                 binary, 'service', 'restart'], capture_output=True)
+        if result.returncode:
+            print('OpenCode service restart failed; rerun deployment. Output withheld to protect credentials.', file=sys.stderr)
+            sys.exit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', dir=service_receipt.parent,
+                                             prefix='.opencode-oauth-service-', delete=False) as handle:
+                staged = Path(handle.name)
+                handle.write(receipt)
+            os.replace(staged, service_receipt)
+        finally:
+            if staged is not None and staged.exists():
+                staged.unlink()
         Path(changed).touch()
 SBX_PROXY_OAUTH
 fi
 if [[ -e $work_dir/changed ]]; then
-    stage_done changed 'Imported masked OpenCode OAuth from host bridge'
+    stage_done changed 'Configured OpenCode host OAuth placeholders'
 elif "$host_oauth"; then
     stage_done unchanged 'Saved authentication selection preserved'
 else
@@ -3346,7 +3436,7 @@ if __name__ == '__main__':
     Ownership(Path(sys.argv[1]), sys.argv[2]).commit()
 SBX_CONFIG_OWNERSHIP
 
-stage_begin 'OpenCode defaults' 'Checking shared models and MCP gateway'
+stage_begin 'OpenCode defaults' 'Checking shared models and MCP settings'
 opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 [[ $opencode_config_dir == /* ]] || die 'OpenCode configuration directory must be absolute.'
 # JSONC takes precedence when both files exist. Edit only the effective file.
@@ -3360,7 +3450,7 @@ if exists "$opencode_config"; then
 fi
 # Mask JSONC comments and trailing commas without changing character offsets.
 # Update owned settings. Preserve user overrides, other text, and comments.
-PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_OPENCODE_MODEL'
+PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$opencode_config" "$work_dir/opencode-model.json" "$main_model" "$subagent_model" "$mcp_gateway_url" "$log_dir/config-ownership" "$cloud_context7_url" <<'SBX_OPENCODE_MODEL'
 import json
 from pathlib import Path
 import re
@@ -3369,6 +3459,7 @@ import sys
 source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = ('openai/' + model for model in sys.argv[3:5])
 gateway_url = sys.argv[5]
+context7_url = sys.argv[7] if len(sys.argv) > 7 else ''
 from config_ownership import Ownership
 ownership = Ownership(source, sys.argv[6])
 desired = {
@@ -3419,6 +3510,26 @@ if gateway_url and isinstance(gateway, dict) and ('command' in gateway or gatewa
         desired.pop('mcp', None)
     else:
         ownership.unknown('mcp.mcp-gateway')
+if context7_url:
+    mcp = data.get('mcp', {})
+    if not isinstance(mcp, dict):
+        ownership.unknown('mcp')
+    # Native OpenCode v2 uses mcp.servers. Preserve existing legacy entries.
+    nested = 'servers' in mcp or 'context7' not in mcp
+    servers = mcp.get('servers', {}) if nested else mcp
+    if not isinstance(servers, dict):
+        ownership.unknown('mcp.servers')
+    current = servers.get('context7', {})
+    label = 'mcp.servers.context7' if nested else 'mcp.context7'
+    if not isinstance(current, dict) or 'command' in current or current.get('type', 'remote') != 'remote':
+        ownership.unknown(label)
+    # Preserve explicit user endpoints, disable flags, headers, and OAuth choices.
+    if not current or current.get('url') == context7_url:
+        target = desired.setdefault('mcp', {})
+        if nested:
+            target = target.setdefault('servers', {})
+        target['context7'] = {'type': 'remote', 'url': context7_url}
+
 desired = ownership.select(data, desired)
 
 # Visit only managed object paths. Preserve other settings.
@@ -3496,7 +3607,7 @@ else
 fi
 python3 "$work_dir/config_ownership.py" "$opencode_config" "$log_dir/config-ownership"
 
-stage_begin 'Codex defaults' 'Checking models, host OAuth and MCP gateway'
+stage_begin 'Codex defaults' 'Checking models, host OAuth and MCP settings'
 codex_config_dir="${CODEX_HOME:-$HOME/.codex}"
 [[ $codex_config_dir == /* ]] || die 'Codex configuration directory must be absolute.'
 codex_config="$codex_config_dir/config.toml"
@@ -3507,7 +3618,7 @@ fi
 # TOMLKit preserves comments and unrelated settings, including other MCP servers.
 # Parse before publishing; matching settings leave the existing file untouched.
 PYTHONPATH="$work_dir${PYTHONPATH:+:$PYTHONPATH}" python3 - "$codex_config" "$work_dir/codex-model.toml" "$main_model" "$subagent_model" \
-    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" "$log_dir/config-ownership" <<'SBX_CODEX_MODEL'
+    "$host_oauth" "$oauth_provider" "$oauth_base_url" "$oauth_access" "$mcp_gateway_url" "$log_dir/config-ownership" "$cloud_context7_url" <<'SBX_CODEX_MODEL'
 from pathlib import Path
 import sys
 import tomlkit
@@ -3516,6 +3627,7 @@ source, staged = map(Path, sys.argv[1:3])
 main_model, subagent_model = sys.argv[3:5]
 host_oauth, provider_id, base_url, access = sys.argv[5:9]
 gateway_url = sys.argv[9]
+context7_url = sys.argv[11] if len(sys.argv) > 11 else ''
 from config_ownership import Ownership
 ownership = Ownership(source, sys.argv[10])
 existed = source.exists()
@@ -3541,6 +3653,14 @@ if gateway_url and hasattr(gateway, 'get') and 'command' in gateway:
     else:
         ownership.unknown('mcp_servers.mcp-gateway')
 # Unwrap TOMLKit values for ownership checks. Keep its document for editing.
+if context7_url:
+    if not hasattr(servers, 'get'):
+        ownership.unknown('mcp_servers')
+    current = servers.get('context7', {})
+    if not hasattr(current, 'get') or 'command' in current:
+        ownership.unknown('mcp_servers.context7')
+    if not current or current.get('url') == context7_url:
+        desired.setdefault('mcp_servers', {})['context7'] = {'url': context7_url}
 selected = ownership.select(config.unwrap(), desired)
 changed = False
 

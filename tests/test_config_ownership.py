@@ -32,7 +32,7 @@ class ConfigOwnership(unittest.TestCase):
         self.modules.start()
         self.addCleanup(self.modules.stop)
 
-    def run_config(self, harness, main='main', sub='sub', gateway='gateway', publish=True, commit=True):
+    def run_config(self, harness, main='main', sub='sub', gateway='gateway', publish=True, commit=True, context7=''):
         source = self.root / ('config.jsonc' if harness == 'opencode' else 'config.toml')
         staged = self.root / 'staged'
         staged.unlink(missing_ok=True)
@@ -40,6 +40,7 @@ class ConfigOwnership(unittest.TestCase):
         args = [str(source), str(staged), main, sub]
         args += [gateway, str(state)] if harness == 'opencode' else [
             'false', 'sbx-chatgpt', 'base', 'masked-access', gateway, str(state)]
+        args.append(context7)
         with patch.object(sys, 'argv', ['fixture'] + args):
             exec(compile(payload('SBX_' + harness.upper() + '_MODEL'), harness, 'exec'), {})
         changed = staged.exists()
@@ -100,6 +101,41 @@ class ConfigOwnership(unittest.TestCase):
 
     def test_opencode_lifecycle(self):
         self.check_lifecycle('opencode')
+
+    def test_cloud_direct_context7_preserves_client_settings_and_reruns(self):
+        url = 'https://mcp.context7.com/mcp'
+        for harness in ('opencode', 'codex'):
+            if harness == 'codex' and tomlkit is None:
+                continue
+            with self.subTest(harness=harness):
+                source, changed = self.run_config(harness, gateway='', context7=url)
+                self.assertTrue(changed)
+                data = self.read(harness, source)
+                servers = data['mcp']['servers'] if harness == 'opencode' else data['mcp_servers']
+                self.assertEqual(servers['context7']['url'], url)
+                self.assertNotIn('mcp-gateway', servers)
+                before = source.read_bytes(), source.stat().st_mtime_ns
+                self.assertFalse(self.run_config(harness, gateway='', context7=url)[1])
+                self.assertEqual(before, (source.read_bytes(), source.stat().st_mtime_ns))
+                servers['context7']['url'] = 'https://custom.example/mcp'
+                servers['context7']['disabled' if harness == 'opencode' else 'enabled'] = harness == 'opencode'
+                servers['context7']['headers' if harness == 'opencode' else 'http_headers'] = {'X-Custom': 'keep'}
+                self.write(harness, source, data)
+                expected = copy.deepcopy(servers['context7'])
+                self.run_config(harness, gateway='', context7=url)
+                result = self.read(harness, source)
+                actual = result['mcp']['servers']['context7'] if harness == 'opencode' else result['mcp_servers']['context7']
+                self.assertEqual(actual, expected)
+
+    def test_matching_native_context7_is_preserved_without_claiming_ownership(self):
+        url = 'https://mcp.context7.com/mcp'
+        source = self.root / 'config.jsonc'
+        source.write_text('{"mcp":{"servers":{"context7":{"type":"remote","url":"' + url + '","disabled":true,"headers":{"X-Custom":"keep"}}}}}')
+        original = json.loads(source.read_text())['mcp']
+        self.run_config('opencode', gateway='', context7=url)
+        self.assertEqual(self.read('opencode', source)['mcp'], original)
+        owner = self.module.Ownership(source, self.root / 'state')
+        self.assertFalse(any(key.startswith('mcp.') for key in owner.settings))
 
     def test_missing_gateway_does_not_create_or_replace_mcp_settings(self):
         source, _ = self.run_config('opencode', gateway='')

@@ -276,6 +276,12 @@ sbx daemon restart
 Reconnect and repeat the checks. Restart can interrupt sessions.
 Keep local logins and managed token placeholders unchanged.
 
+If deployment reports `Managed local OpenCode OAuth entry differs`, stop.
+Keep saved logins, credential IDs, and `auth.json`. Reauthorization and restart
+may not repair this error. OpenCode v2.3.0 import skips existing IDs. Its public
+update API changes labels only. Do not delete the entry or edit the credential
+database. Review the managed `sbx-openai` entry before retrying.
+
 ### Shell aliases and prompt after reconnect
 
 Paste the updated installer, then check in **sandbox Bash**:
